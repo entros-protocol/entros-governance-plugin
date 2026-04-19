@@ -1,6 +1,6 @@
 # IAM Voter Weight Plugin
 
-SPL Governance voter weight plugin for [IAM Protocol](https://iam-human.io). Adds human liveness verification to DAO governance on Solana.
+SPL Governance voter weight plugin for [IAM Protocol](https://iamprotocol.io). Adds human liveness verification to DAO governance on Solana.
 
 ## What it does
 
@@ -99,7 +99,7 @@ The Realms V2 UI supports custom voter weight plugins. Any DAO admin can configu
 
 ## Related
 
-- [IAM Protocol](https://iam-human.io) -- behavioral proof-of-humanity on Solana
+- [IAM Protocol](https://iamprotocol.io) -- behavioral proof-of-humanity on Solana
 - [Pulse SDK](https://www.npmjs.com/package/@iam-protocol/pulse-sdk) -- client-side verification SDK
 - [Protocol Core](https://github.com/iam-protocol/protocol-core) -- on-chain identity programs
 - [Governance Program Library](https://github.com/Mythic-Project/governance-program-library) -- reference voter weight plugins
