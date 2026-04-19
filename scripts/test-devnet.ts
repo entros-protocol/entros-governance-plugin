@@ -10,7 +10,7 @@
  *
  * Prerequisites:
  * - IAM voter weight plugin deployed to devnet
- * - Wallet has an IAM IdentityState on devnet (verified via iam-human.io)
+ * - Wallet has an IAM IdentityState on devnet (verified via iamprotocol.io)
  * - Solana CLI configured for devnet with a funded keypair
  *
  * Usage: npx tsx scripts/test-devnet.ts
@@ -263,7 +263,7 @@ async function main() {
 
   const identityAccount = await connection.getAccountInfo(identityPda);
   if (!identityAccount) {
-    console.error("No IAM IdentityState found. Verify at iam-human.io/verify first.");
+    console.error("No IAM IdentityState found. Verify at iamprotocol.io/verify first.");
     process.exit(1);
   }
 
