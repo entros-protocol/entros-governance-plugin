@@ -8,7 +8,7 @@ pub struct Registrar {
     pub realm: Pubkey,
     /// The governing token mint (community or council)
     pub governing_token_mint: Pubkey,
-    /// Minimum IAM Trust Score required to vote
+    /// Minimum Entros Trust Score required to vote
     pub min_trust_score: u16,
     /// Maximum age of last verification in seconds (e.g., 2592000 = 30 days)
     pub max_verification_age: i64,

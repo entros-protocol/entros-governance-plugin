@@ -6,10 +6,10 @@ solana_version = "2.2.1"
 seeds = false
 
 [programs.localnet]
-iam_voter_weight = "99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534"
+entros_voter_weight = "99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534"
 
 [programs.devnet]
-iam_voter_weight = "99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534"
+entros_voter_weight = "99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534"
 
 [registry]
 url = "https://api.apr.dev"
@@ -23,7 +23,7 @@ test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
 
 [[test.genesis]]
 address = "GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2"
-program = "tests/fixtures/iam_anchor.so"
+program = "tests/fixtures/entros_anchor.so"
 
 [[test.genesis]]
 address = "GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw"

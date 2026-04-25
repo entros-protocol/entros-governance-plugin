@@ -3,7 +3,7 @@ use anchor_lang::prelude::*;
 use crate::error::IamVoterError;
 use crate::state::*;
 
-/// IAM Anchor program ID: GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2
+/// Entros Anchor program ID: GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2
 const IAM_ANCHOR_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0xe7, 0x36, 0x00, 0xda, 0x70, 0x7e, 0xbf, 0x19,
     0x90, 0x7d, 0x32, 0xec, 0x88, 0x42, 0xa4, 0x5f,
@@ -37,7 +37,7 @@ pub struct UpdateVoterWeightRecord<'info> {
 
     /// The voter whose weight is being updated. Must match the voter weight record owner.
     pub voter_authority: Signer<'info>,
-    // remaining_accounts[0] = IAM IdentityState PDA (read-only)
+    // remaining_accounts[0] = Entros IdentityState PDA (read-only)
 }
 
 pub fn update_voter_weight_record<'info>(
@@ -58,7 +58,7 @@ pub fn update_voter_weight_record<'info>(
         .first()
         .ok_or(error!(IamVoterError::MissingIdentityAccount))?;
 
-    // 2. Verify the account is owned by the IAM Anchor program
+    // 2. Verify the account is owned by the Entros Anchor program
     require!(
         *identity_info.owner == IAM_ANCHOR_PROGRAM_ID,
         IamVoterError::InvalidIdentityOwner

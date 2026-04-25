@@ -48,8 +48,8 @@ function buildIdentityStateData(
   return data;
 }
 
-describe("iam-voter-weight", () => {
-  describe("IAM program ID", () => {
+describe("entros-voter-weight", () => {
+  describe("Entros program ID", () => {
     it("constant bytes encode to the correct base58 address", () => {
       const bytes = Buffer.from([
         0xe7, 0x36, 0x00, 0xda, 0x70, 0x7e, 0xbf, 0x19,

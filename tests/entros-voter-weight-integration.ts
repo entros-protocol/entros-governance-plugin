@@ -102,7 +102,7 @@ async function createMint(payerKp: Keypair): Promise<PublicKey> {
   return mintKeypair.publicKey;
 }
 
-describe("iam-voter-weight integration", () => {
+describe("entros-voter-weight integration", () => {
   before(async () => {
     payer = Keypair.generate();
 
@@ -142,7 +142,7 @@ describe("iam-voter-weight integration", () => {
     before(async () => {
       communityMint = await createMint(payer);
 
-      const realmName = `IAM-Test-${Date.now().toString(36)}`;
+      const realmName = `Entros-Test-${Date.now().toString(36)}`;
       const realm = buildCreateRealmInstruction(
         realmName,
         payer.publicKey,
@@ -431,12 +431,12 @@ describe("iam-voter-weight integration", () => {
     });
 
     it("rejects update with wrong identity owner", async () => {
-      // Pass the registrar account as identity -- it's owned by the plugin, not IAM
+      // Pass the registrar account as identity -- it's owned by the plugin, not Entros
       const ix = buildUpdateVoterWeightRecordInstruction(
         failRegistrarPda,
         failVwrA,
         VOTER_A.publicKey,
-        failRegistrarPda // wrong owner (plugin program, not IAM)
+        failRegistrarPda // wrong owner (plugin program, not Entros)
       );
 
       const tx = new Transaction().add(ix);

@@ -1,5 +1,5 @@
 [workspace]
-members = ["programs/iam-voter-weight"]
+members = ["programs/entros-voter-weight"]
 resolver = "2"
 
 [workspace.dependencies]

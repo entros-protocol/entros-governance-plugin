@@ -1,13 +1,13 @@
 [package]
-name = "iam-voter-weight"
+name = "entros-voter-weight"
 version = "0.1.0"
-description = "SPL Governance voter weight plugin for IAM Protocol human verification"
+description = "SPL Governance voter weight plugin for Entros Protocol human verification"
 license = "MIT"
 edition = "2021"
 
 [lib]
 crate-type = ["cdylib", "lib"]
-name = "iam_voter_weight"
+name = "entros_voter_weight"
 
 [features]
 default = []
