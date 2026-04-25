@@ -1,18 +1,18 @@
-# IAM Voter Weight Plugin
+# Entros Voter Weight Plugin
 
-SPL Governance voter weight plugin for [IAM Protocol](https://iamprotocol.io). Adds human liveness verification to DAO governance on Solana.
+SPL Governance voter weight plugin for [Entros Protocol](https://entros.io). Adds human liveness verification to DAO governance on Solana.
 
 ## What it does
 
 DAOs on [Realms](https://app.realms.today) can configure this plugin to require voters to be recently verified humans with sustained behavioral history. Bots, automated scripts, and dormant wallets are excluded from governance.
 
-Designed to layer on top of existing voter weight plugins. Chain IAM with token-voter to require both token holdings and proof of human presence. Chain with quadratic voting for verified-human quadratic weights.
+Designed to layer on top of existing voter weight plugins. Chain Entros with token-voter to require both token holdings and proof of human presence. Chain with quadratic voting for verified-human quadratic weights.
 
 ## How it works
 
 1. DAO admin calls `create_registrar` with a minimum Trust Score and maximum verification age
 2. Each voter calls `create_voter_weight_record` to initialize their record
-3. Before voting, the voter calls `update_voter_weight_record` which reads their IAM IdentityState PDA cross-program and checks:
+3. Before voting, the voter calls `update_voter_weight_record` which reads their Entros IdentityState PDA cross-program and checks:
    - Trust Score >= minimum configured by the DAO (proves sustained behavioral history)
    - Last verification is recent enough (proves the human is actively engaged)
 4. If both pass, voter_weight is set to 1 with a short expiry (~40 seconds)
@@ -28,7 +28,7 @@ The voter weight expires after ~100 slots, forcing the update to happen in the s
 | `update_registrar` | DAO admin updates configuration parameters |
 | `close_registrar` | DAO admin closes the registrar and reclaims rent |
 | `create_voter_weight_record` | Initialize a voter's weight record (born expired) |
-| `update_voter_weight_record` | Read IAM IdentityState, validate trust score and recency, set voter_weight = 1 |
+| `update_voter_weight_record` | Read Entros IdentityState, validate trust score and recency, set voter_weight = 1 |
 | `close_voter_weight_record` | Voter closes their record and reclaims rent |
 | `create_max_voter_weight_record` | DAO admin initializes quorum tracking (realm authority required) |
 | `update_max_voter_weight_record` | DAO admin sets the max voter weight (never expires, admin-managed) |
@@ -38,7 +38,7 @@ The voter weight expires after ~100 slots, forcing the update to happen in the s
 ```
 Voter wants to cast a vote
     → calls update_voter_weight_record
-    → plugin reads IAM IdentityState PDA (cross-program, no CPI)
+    → plugin reads Entros IdentityState PDA (cross-program, no CPI)
     → checks trust_score >= min_trust_score
     → checks verification age < max_verification_age
     → sets voter_weight = 1, expiry = current_slot + 100
@@ -46,7 +46,7 @@ Voter wants to cast a vote
     → vote is accepted
 ```
 
-The plugin reads the IAM IdentityState account via raw byte deserialization (not Anchor CPI) to avoid version coupling with the IAM Anchor program.
+The plugin reads the Entros IdentityState account via raw byte deserialization (not Anchor CPI) to avoid version coupling with the Entros Anchor program.
 
 ## Program ID
 
@@ -71,8 +71,8 @@ npx tsx scripts/generate-test-fixtures.ts
 
 # Start local validator with genesis programs and fixture accounts
 solana-test-validator \
-  --bpf-program 99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534 target/deploy/iam_voter_weight.so \
-  --bpf-program GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2 tests/fixtures/iam_anchor.so \
+  --bpf-program 99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534 target/deploy/entros_voter_weight.so \
+  --bpf-program GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2 tests/fixtures/entros_anchor.so \
   --bpf-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw tests/fixtures/spl_governance.so \
   --account 63cKuvoe9WuNH9Ds6aXF7iSc4jHmJc4ZkxdHTaitJ5tr tests/fixtures/identity-state-a.json \
   --account 73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ tests/fixtures/identity-state-b.json \
@@ -82,7 +82,7 @@ solana-test-validator \
 npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
 ```
 
-38 tests: 20 unit tests (byte layout, PDA derivation, validation logic) + 18 integration tests (real transactions against local validator with IAM Anchor and spl-governance loaded as genesis programs).
+38 tests: 20 unit tests (byte layout, PDA derivation, validation logic) + 18 integration tests (real transactions against local validator with Entros Anchor and spl-governance loaded as genesis programs).
 
 ## Dependencies
 
@@ -95,13 +95,13 @@ npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
 
 ## Realms UI Compatibility
 
-The Realms V2 UI supports custom voter weight plugins. Any DAO admin can configure IAM as their voter weight addin by pasting the program ID (`99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534`) in the "Custom voting program ID" field in the realm settings. No frontend changes required.
+The Realms V2 UI supports custom voter weight plugins. Any DAO admin can configure Entros as their voter weight addin by pasting the program ID (`99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534`) in the "Custom voting program ID" field in the realm settings. No frontend changes required.
 
 ## Related
 
-- [IAM Protocol](https://iamprotocol.io) -- behavioral proof-of-humanity on Solana
-- [Pulse SDK](https://www.npmjs.com/package/@iam-protocol/pulse-sdk) -- client-side verification SDK
-- [Protocol Core](https://github.com/iam-protocol/protocol-core) -- on-chain identity programs
+- [Entros Protocol](https://entros.io) -- behavioral proof-of-personhood on Solana
+- [Pulse SDK](https://www.npmjs.com/package/@entros/pulse-sdk) -- client-side verification SDK
+- [Protocol Core](https://github.com/entros-protocol/protocol-core) -- on-chain identity programs
 - [Governance Program Library](https://github.com/Mythic-Project/governance-program-library) -- reference voter weight plugins
 
 ## License

@@ -11,7 +11,7 @@ use instructions::*;
 declare_id!("99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534");
 
 #[program]
-pub mod iam_voter_weight {
+pub mod entros_voter_weight {
     use super::*;
 
     pub fn create_registrar(

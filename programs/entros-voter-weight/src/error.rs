@@ -11,7 +11,7 @@ pub enum IamVoterError {
     #[msg("Identity account address does not match expected PDA")]
     InvalidIdentityPda,
 
-    #[msg("Identity account is not owned by the IAM Anchor program")]
+    #[msg("Identity account is not owned by the Entros Anchor program")]
     InvalidIdentityOwner,
 
     #[msg("Identity account data too short")]

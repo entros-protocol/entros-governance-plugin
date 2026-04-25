@@ -617,6 +617,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
+name = "entros-voter-weight"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "borsh 1.5.5",
+ "solana-program",
+ "spl-governance-addin-api-mythic",
+ "spl-governance-mythic",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -731,12 +742,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashbrown"
-version = "0.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
-
-[[package]]
 name = "heck"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -755,24 +760,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "iam-voter-weight"
-version = "0.1.0"
-dependencies = [
- "anchor-lang",
- "borsh 1.5.5",
- "solana-program",
- "spl-governance-addin-api-mythic",
- "spl-governance-mythic",
-]
-
-[[package]]
 name = "indexmap"
-version = "2.13.1"
+version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45a8a2b9cb3e0b0c1803dbb0758ffac5de2f425b23c28f518faabd9d805342ff"
+checksum = "62f822373a4fe84d4bb149bf54e584a7f4abec90e072ed49cda0edea5b95471f"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.1",
+ "hashbrown 0.15.2",
 ]
 
 [[package]]

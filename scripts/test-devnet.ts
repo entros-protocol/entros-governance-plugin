@@ -1,16 +1,16 @@
 /**
- * End-to-end devnet test for the IAM voter weight plugin.
+ * End-to-end devnet test for the Entros voter weight plugin.
  *
  * 1. Creates an SPL token mint
- * 2. Creates a Realms DAO with the IAM plugin as voter weight addin
- * 3. Calls create_registrar on the IAM voter weight plugin
+ * 2. Creates a Realms DAO with the Entros plugin as voter weight addin
+ * 3. Calls create_registrar on the Entros voter weight plugin
  * 4. Calls create_voter_weight_record for the test voter
- * 5. Calls update_voter_weight_record with the voter's IAM IdentityState
+ * 5. Calls update_voter_weight_record with the voter's Entros IdentityState
  * 6. Reads the VoterWeightRecord and verifies voter_weight = 1
  *
  * Prerequisites:
- * - IAM voter weight plugin deployed to devnet
- * - Wallet has an IAM IdentityState on devnet (verified via iamprotocol.io)
+ * - Entros voter weight plugin deployed to devnet
+ * - Wallet has an Entros IdentityState on devnet (verified via entros.io)
  * - Solana CLI configured for devnet with a funded keypair
  *
  * Usage: npx tsx scripts/test-devnet.ts
@@ -234,7 +234,7 @@ function buildUpdateVoterWeightRecordInstruction(
       { pubkey: registrarPda, isSigner: false, isWritable: false },
       { pubkey: vwrPda, isSigner: false, isWritable: true },
       { pubkey: voterKey, isSigner: true, isWritable: false },
-      // remaining_accounts[0] = IAM IdentityState PDA
+      // remaining_accounts[0] = Entros IdentityState PDA
       { pubkey: identityPda, isSigner: false, isWritable: false },
     ],
     data: disc,
@@ -244,7 +244,7 @@ function buildUpdateVoterWeightRecordInstruction(
 // ---- Main ----
 
 async function main() {
-  console.log("=== IAM Voter Weight Plugin: End-to-End Devnet Test ===\n");
+  console.log("=== Entros Voter Weight Plugin: End-to-End Devnet Test ===\n");
   console.log("Payer:", payer.publicKey.toBase58());
 
   const balance = await connection.getBalance(payer.publicKey);
@@ -255,7 +255,7 @@ async function main() {
     process.exit(1);
   }
 
-  // 1. Check IAM IdentityState exists
+  // 1. Check Entros IdentityState exists
   const [identityPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("identity"), payer.publicKey.toBuffer()],
     IAM_ANCHOR_PROGRAM_ID,
@@ -263,13 +263,13 @@ async function main() {
 
   const identityAccount = await connection.getAccountInfo(identityPda);
   if (!identityAccount) {
-    console.error("No IAM IdentityState found. Verify at iamprotocol.io/verify first.");
+    console.error("No Entros IdentityState found. Verify at entros.io/verify first.");
     process.exit(1);
   }
 
   const trustScore = identityAccount.data.readUInt16LE(60);
   const lastVerif = Number(identityAccount.data.readBigInt64LE(48));
-  console.log("IAM Trust Score:", trustScore);
+  console.log("Entros Trust Score:", trustScore);
   console.log("Last Verified:", new Date(lastVerif * 1000).toISOString());
 
   // 2. Create SPL token mint (community token)
@@ -296,9 +296,9 @@ async function main() {
   await sendAndConfirmTransaction(connection, createMintTx, [payer, mintKeypair]);
   console.log("Community mint:", mintKeypair.publicKey.toBase58());
 
-  // 3. Create Realm with IAM plugin as voter weight addin
+  // 3. Create Realm with Entros plugin as voter weight addin
   console.log("\n--- Step 2: Create Realms DAO ---");
-  const realmName = `IAM-Test-${Date.now().toString(36)}`;
+  const realmName = `Entros-Test-${Date.now().toString(36)}`;
 
   const { instruction: createRealmIx, realmPda } = buildCreateRealmInstruction(
     realmName,
@@ -393,7 +393,7 @@ async function main() {
   // Final verdict
   console.log("\n=== RESULTS ===");
   if (voterWeight === 1n && expirySlot !== null && expirySlot > 0n) {
-    console.log("PASS: Voter weight = 1, expiry set. IAM voter weight plugin works end-to-end.");
+    console.log("PASS: Voter weight = 1, expiry set. Entros voter weight plugin works end-to-end.");
   } else {
     console.log("FAIL: Unexpected voter weight or expiry.");
     process.exit(1);
