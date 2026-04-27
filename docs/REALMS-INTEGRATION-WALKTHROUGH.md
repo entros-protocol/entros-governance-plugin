@@ -119,7 +119,7 @@ Call `create_registrar` (via Anchor client or the plugin's helper script) with:
 | Parameter | Recommended starting value | Rationale |
 |---|---|---|
 | `min_trust_score` | `100` | Excludes brand-new identities, requires ~2-4 weeks of sustained verifications |
-| `max_verification_age_secs` | `86400` (24h) | Voter must have verified in the last day; balances UX with bot-staleness |
+| `max_verification_age` | `86400` (24h) | Voter must have verified in the last day; balances UX with bot-staleness |
 | `realm` | Your Realm's pubkey | Binds the registrar to this specific DAO |
 
 ```typescript
@@ -162,7 +162,7 @@ When a member casts a vote on the Realms UI, the wallet bundles `update_voter_we
 
 If the voter doesn't meet the threshold:
 - Trust Score below `min_trust_score` → `voter_weight = 0` → vote silently has no effect
-- Verification older than `max_verification_age_secs` → same outcome
+- Verification older than `max_verification_age` → same outcome
 - No Entros Anchor exists → same outcome
 
 ### Step 5 (recommended): Stack with token-voter
