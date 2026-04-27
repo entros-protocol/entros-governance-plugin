@@ -1,10 +1,10 @@
 use anchor_lang::prelude::*;
 
-use crate::error::IamVoterError;
+use crate::error::EntrosVoterError;
 use crate::state::*;
 
 /// Entros Anchor program ID: GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2
-const IAM_ANCHOR_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
+const ENTROS_ANCHOR_PROGRAM_ID: Pubkey = Pubkey::new_from_array([
     0xe7, 0x36, 0x00, 0xda, 0x70, 0x7e, 0xbf, 0x19,
     0x90, 0x7d, 0x32, 0xec, 0x88, 0x42, 0xa4, 0x5f,
     0xb4, 0xd5, 0x32, 0x63, 0xa1, 0x49, 0x68, 0x01,
@@ -29,9 +29,9 @@ pub struct UpdateVoterWeightRecord<'info> {
     #[account(
         mut,
         constraint = voter_weight_record.realm == registrar.realm
-            @ IamVoterError::VoterWeightRecordRealmMismatch,
+            @ EntrosVoterError::VoterWeightRecordRealmMismatch,
         constraint = voter_weight_record.governing_token_mint == registrar.governing_token_mint
-            @ IamVoterError::VoterWeightRecordMintMismatch,
+            @ EntrosVoterError::VoterWeightRecordMintMismatch,
     )]
     pub voter_weight_record: Account<'info, VoterWeightRecord>,
 
@@ -49,50 +49,50 @@ pub fn update_voter_weight_record<'info>(
 
     require!(
         voter_weight_record.governing_token_owner == voter,
-        IamVoterError::VoterWeightRecordOwnerMismatch
+        EntrosVoterError::VoterWeightRecordOwnerMismatch
     );
 
     // 1. Get IdentityState account from remaining_accounts
     let identity_info = ctx
         .remaining_accounts
         .first()
-        .ok_or(error!(IamVoterError::MissingIdentityAccount))?;
+        .ok_or(error!(EntrosVoterError::MissingIdentityAccount))?;
 
     // 2. Verify the account is owned by the Entros Anchor program
     require!(
-        *identity_info.owner == IAM_ANCHOR_PROGRAM_ID,
-        IamVoterError::InvalidIdentityOwner
+        *identity_info.owner == ENTROS_ANCHOR_PROGRAM_ID,
+        EntrosVoterError::InvalidIdentityOwner
     );
 
     // 3. Verify the PDA derivation matches ["identity", voter_key]
     let (expected_pda, _bump) = Pubkey::find_program_address(
         &[b"identity", voter.as_ref()],
-        &IAM_ANCHOR_PROGRAM_ID,
+        &ENTROS_ANCHOR_PROGRAM_ID,
     );
     require!(
         identity_info.key() == expected_pda,
-        IamVoterError::InvalidIdentityPda
+        EntrosVoterError::InvalidIdentityPda
     );
 
     // 4. Read raw bytes from the account data
     let data = identity_info.try_borrow_data()?;
     require!(
         data.len() >= IDENTITY_MIN_DATA_LEN,
-        IamVoterError::InvalidIdentityData
+        EntrosVoterError::InvalidIdentityData
     );
 
     // 5. Parse last_verification_timestamp (i64 LE at offset 48)
     let last_verification_timestamp = i64::from_le_bytes(
         data[IDENTITY_LAST_VERIFICATION_OFFSET..IDENTITY_LAST_VERIFICATION_OFFSET + 8]
             .try_into()
-            .map_err(|_| error!(IamVoterError::InvalidIdentityData))?,
+            .map_err(|_| error!(EntrosVoterError::InvalidIdentityData))?,
     );
 
     // 6. Parse trust_score (u16 LE at offset 60)
     let trust_score = u16::from_le_bytes(
         data[IDENTITY_TRUST_SCORE_OFFSET..IDENTITY_TRUST_SCORE_OFFSET + 2]
             .try_into()
-            .map_err(|_| error!(IamVoterError::InvalidIdentityData))?,
+            .map_err(|_| error!(EntrosVoterError::InvalidIdentityData))?,
     );
 
     drop(data);
@@ -100,7 +100,7 @@ pub fn update_voter_weight_record<'info>(
     // 7. Check trust score meets minimum
     require!(
         trust_score >= registrar.min_trust_score,
-        IamVoterError::InsufficientTrustScore
+        EntrosVoterError::InsufficientTrustScore
     );
 
     // 8. Check verification recency
@@ -111,7 +111,7 @@ pub fn update_voter_weight_record<'info>(
         .unwrap_or(i64::MAX);
     require!(
         age < registrar.max_verification_age,
-        IamVoterError::VerificationExpired
+        EntrosVoterError::VerificationExpired
     );
 
     // 9. One person, one vote

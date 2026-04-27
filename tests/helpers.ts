@@ -13,7 +13,7 @@ export const GOVERNANCE_PROGRAM_ID = new PublicKey(
 export const PLUGIN_PROGRAM_ID = new PublicKey(
   "99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534"
 );
-export const IAM_ANCHOR_PROGRAM_ID = new PublicKey(
+export const ENTROS_ANCHOR_PROGRAM_ID = new PublicKey(
   "GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2"
 );
 

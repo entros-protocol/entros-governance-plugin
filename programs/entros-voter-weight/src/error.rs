@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum IamVoterError {
+pub enum EntrosVoterError {
     #[msg("Invalid realm authority")]
     InvalidRealmAuthority,
 
@@ -31,4 +31,7 @@ pub enum IamVoterError {
 
     #[msg("Voter weight record owner does not match voter authority")]
     VoterWeightRecordOwnerMismatch,
+
+    #[msg("Realm has no authority configured")]
+    RealmHasNoAuthority,
 }

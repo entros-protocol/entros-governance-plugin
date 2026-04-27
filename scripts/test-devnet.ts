@@ -39,7 +39,7 @@ import * as crypto from "crypto";
 // Program IDs
 const GOVERNANCE_PROGRAM_ID = new PublicKey("GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw");
 const PLUGIN_PROGRAM_ID = new PublicKey("99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534");
-const IAM_ANCHOR_PROGRAM_ID = new PublicKey("GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2");
+const ENTROS_ANCHOR_PROGRAM_ID = new PublicKey("GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2");
 
 // Load keypair
 const keypairPath = process.env.KEYPAIR_PATH || path.resolve(__dirname, "../../.config/devnet-authority.json");
@@ -258,7 +258,7 @@ async function main() {
   // 1. Check Entros IdentityState exists
   const [identityPda] = PublicKey.findProgramAddressSync(
     [Buffer.from("identity"), payer.publicKey.toBuffer()],
-    IAM_ANCHOR_PROGRAM_ID,
+    ENTROS_ANCHOR_PROGRAM_ID,
   );
 
   const identityAccount = await connection.getAccountInfo(identityPda);

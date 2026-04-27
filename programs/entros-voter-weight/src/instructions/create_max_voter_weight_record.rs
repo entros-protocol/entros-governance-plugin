@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use spl_governance::state::realm;
 
-use crate::error::IamVoterError;
+use crate::error::EntrosVoterError;
 use crate::state::*;
 
 #[derive(Accounts)]
@@ -49,10 +49,13 @@ pub fn create_max_voter_weight_record(
         &registrar.governing_token_mint,
     )?;
 
+    let realm_authority = realm_data
+        .authority
+        .ok_or(error!(EntrosVoterError::RealmHasNoAuthority))?;
     require_eq!(
-        realm_data.authority.unwrap(),
+        realm_authority,
         ctx.accounts.realm_authority.key(),
-        IamVoterError::InvalidRealmAuthority
+        EntrosVoterError::InvalidRealmAuthority
     );
 
     let record = &mut ctx.accounts.max_voter_weight_record;

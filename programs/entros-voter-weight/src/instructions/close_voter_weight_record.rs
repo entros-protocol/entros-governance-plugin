@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::error::IamVoterError;
+use crate::error::EntrosVoterError;
 use crate::state::*;
 
 #[derive(Accounts)]
@@ -15,9 +15,9 @@ pub struct CloseVoterWeightRecord<'info> {
         mut,
         close = sol_destination,
         constraint = voter_weight_record.realm == registrar.realm
-            @ IamVoterError::VoterWeightRecordRealmMismatch,
+            @ EntrosVoterError::VoterWeightRecordRealmMismatch,
         constraint = voter_weight_record.governing_token_mint == registrar.governing_token_mint
-            @ IamVoterError::VoterWeightRecordMintMismatch,
+            @ EntrosVoterError::VoterWeightRecordMintMismatch,
     )]
     pub voter_weight_record: Account<'info, VoterWeightRecord>,
 
@@ -33,7 +33,7 @@ pub fn close_voter_weight_record(ctx: Context<CloseVoterWeightRecord>) -> Result
     require!(
         ctx.accounts.voter_weight_record.governing_token_owner
             == ctx.accounts.voter_authority.key(),
-        IamVoterError::VoterWeightRecordOwnerMismatch
+        EntrosVoterError::VoterWeightRecordOwnerMismatch
     );
 
     Ok(())

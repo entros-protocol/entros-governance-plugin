@@ -1,7 +1,7 @@
 import { PublicKey, Keypair } from "@solana/web3.js";
 import { expect } from "chai";
 
-const IAM_ANCHOR_PROGRAM_ID = new PublicKey(
+const ENTROS_ANCHOR_PROGRAM_ID = new PublicKey(
   "GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2"
 );
 
@@ -122,11 +122,11 @@ describe("entros-voter-weight", () => {
       const wallet = Keypair.generate().publicKey;
       const [pda1] = PublicKey.findProgramAddressSync(
         [Buffer.from("identity"), wallet.toBuffer()],
-        IAM_ANCHOR_PROGRAM_ID
+        ENTROS_ANCHOR_PROGRAM_ID
       );
       const [pda2] = PublicKey.findProgramAddressSync(
         [Buffer.from("identity"), wallet.toBuffer()],
-        IAM_ANCHOR_PROGRAM_ID
+        ENTROS_ANCHOR_PROGRAM_ID
       );
       expect(pda1.toBase58()).to.equal(pda2.toBase58());
     });
@@ -136,11 +136,11 @@ describe("entros-voter-weight", () => {
       const wallet2 = Keypair.generate().publicKey;
       const [pda1] = PublicKey.findProgramAddressSync(
         [Buffer.from("identity"), wallet1.toBuffer()],
-        IAM_ANCHOR_PROGRAM_ID
+        ENTROS_ANCHOR_PROGRAM_ID
       );
       const [pda2] = PublicKey.findProgramAddressSync(
         [Buffer.from("identity"), wallet2.toBuffer()],
-        IAM_ANCHOR_PROGRAM_ID
+        ENTROS_ANCHOR_PROGRAM_ID
       );
       expect(pda1.toBase58()).to.not.equal(pda2.toBase58());
     });

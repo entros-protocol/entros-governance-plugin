@@ -16,7 +16,7 @@ import {
 import { expect } from "chai";
 import {
   PLUGIN_PROGRAM_ID,
-  IAM_ANCHOR_PROGRAM_ID,
+  ENTROS_ANCHOR_PROGRAM_ID,
   anchorDiscriminator,
   buildCreateRealmInstruction,
   buildCreateRegistrarInstruction,
@@ -60,11 +60,11 @@ let vwrPda: PublicKey;
 
 const [VOTER_A_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
   [Buffer.from("identity"), VOTER_A.publicKey.toBuffer()],
-  IAM_ANCHOR_PROGRAM_ID
+  ENTROS_ANCHOR_PROGRAM_ID
 );
 const [VOTER_B_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
   [Buffer.from("identity"), VOTER_B.publicKey.toBuffer()],
-  IAM_ANCHOR_PROGRAM_ID
+  ENTROS_ANCHOR_PROGRAM_ID
 );
 
 function expectError(err: any, errorCode: number): void {
@@ -130,7 +130,7 @@ describe("entros-voter-weight integration", () => {
     expect(identityA, "VOTER_A IdentityState fixture not loaded").to.not.be
       .null;
     expect(identityA!.owner.toBase58()).to.equal(
-      IAM_ANCHOR_PROGRAM_ID.toBase58()
+      ENTROS_ANCHOR_PROGRAM_ID.toBase58()
     );
 
     const identityB = await connection.getAccountInfo(VOTER_B_IDENTITY_PDA);

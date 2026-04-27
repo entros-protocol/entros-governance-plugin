@@ -14,7 +14,7 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import * as fs from "fs";
 import * as path from "path";
 
-const IAM_ANCHOR_PROGRAM_ID = new PublicKey(
+const ENTROS_ANCHOR_PROGRAM_ID = new PublicKey(
   "GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2"
 );
 
@@ -108,11 +108,11 @@ function main() {
   // Compute IdentityState PDAs
   const [pdaA] = PublicKey.findProgramAddressSync(
     [Buffer.from("identity"), voterA.publicKey.toBuffer()],
-    IAM_ANCHOR_PROGRAM_ID,
+    ENTROS_ANCHOR_PROGRAM_ID,
   );
   const [pdaB] = PublicKey.findProgramAddressSync(
     [Buffer.from("identity"), voterB.publicKey.toBuffer()],
-    IAM_ANCHOR_PROGRAM_ID,
+    ENTROS_ANCHOR_PROGRAM_ID,
   );
 
   console.log("VOTER_A IdentityState PDA:", pdaA.toBase58());
@@ -130,13 +130,13 @@ function main() {
     path.join(fixturesDir, "identity-state-a.json"),
     pdaA,
     dataA,
-    IAM_ANCHOR_PROGRAM_ID,
+    ENTROS_ANCHOR_PROGRAM_ID,
   );
   writeFixture(
     path.join(fixturesDir, "identity-state-b.json"),
     pdaB,
     dataB,
-    IAM_ANCHOR_PROGRAM_ID,
+    ENTROS_ANCHOR_PROGRAM_ID,
   );
 
   console.log("\nFixtures written to tests/fixtures/");
