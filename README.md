@@ -1,12 +1,24 @@
 # Entros Voter Weight Plugin
 
-SPL Governance voter weight plugin for [Entros Protocol](https://entros.io). Adds human liveness verification to DAO governance on Solana.
+SPL Governance voter weight plugin for [Entros Protocol](https://entros.io).
 
-## What it does
+## What it is
 
-DAOs on [Realms](https://app.realms.today) can configure this plugin to require voters to be recently verified humans with sustained behavioral history. Bots, automated scripts, and dormant wallets are excluded from governance.
+Optional behavioral gate that layers on top of existing voter weight plugins (token-voter, NFT-voter, quadratic). Catches automated voting bots and gives DAOs a privacy-preserving signal when they don't want to require KYC. One signal in a stack — not a replacement for tokenomics or community moderation.
 
-Designed to layer on top of existing voter weight plugins. Chain Entros with token-voter to require both token holdings and proof of human presence. Chain with quadratic voting for verified-human quadratic weights.
+## What it catches and what it doesn't
+
+**Catches well:** automated voting bots, synthetic-voice attacks, dormant wallets resurrected to vote, wallet-rotation at the bot level.
+
+**Catches imperfectly:** coordinated humans intentionally varying voice and motion across wallets to create Sybil identities. Each fake identity costs the attacker ~12 seconds of focused real-time per verification × weeks of sustained behavior to reach meaningful Trust Score, but the cost isn't infinite. Be honest with your members about this.
+
+**Does not catch at all:** token-based plutocracy, off-chain coordination / vote buying, compromised wallets where the attacker has both the key and the verified Anchor.
+
+This is why the plugin is positioned as additive. A DAO using only Entros has weaker protection than a DAO using token-voter + Entros + community moderation. Full integration walkthrough including stacking patterns and configuration tuning: [`docs/REALMS-INTEGRATION-WALKTHROUGH.md`](docs/REALMS-INTEGRATION-WALKTHROUGH.md).
+
+## Where it fits
+
+DAOs on [Realms](https://app.realms.today) can configure this plugin so each vote requires the voter to have a recently active Entros Anchor with a Trust Score above a configurable threshold. Designed to chain with token-voter (proves token holdings AND liveness), NFT-voter (proves membership AND liveness), or quadratic voting (caps both whale and bot dominance simultaneously).
 
 ## How it works
 
