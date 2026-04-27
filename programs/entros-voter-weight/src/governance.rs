@@ -51,6 +51,13 @@ macro_rules! vote_weight_record {
                 &spl_governance_addin_api::voter_weight::VoterWeightRecord::ACCOUNT_DISCRIMINATOR;
         }
 
+        // Anchor 0.32 requires `IdlBuild` for any type used in `#[derive(Accounts)]`
+        // when the `idl-build` feature is active. We use the default no-op impl so
+        // the wrapped external governance type is not included in our IDL — clients
+        // that need it use spl-governance-addin-api directly.
+        #[cfg(feature = "idl-build")]
+        impl anchor_lang::IdlBuild for VoterWeightRecord {}
+
         impl std::ops::Deref for VoterWeightRecord {
             type Target = spl_governance_addin_api::voter_weight::VoterWeightRecord;
 
@@ -114,6 +121,9 @@ macro_rules! max_voter_weight_record {
             const DISCRIMINATOR: &'static [u8] =
                 &spl_governance_addin_api::max_voter_weight::MaxVoterWeightRecord::ACCOUNT_DISCRIMINATOR;
         }
+
+        #[cfg(feature = "idl-build")]
+        impl anchor_lang::IdlBuild for MaxVoterWeightRecord {}
 
         impl std::ops::Deref for MaxVoterWeightRecord {
             type Target = spl_governance_addin_api::max_voter_weight::MaxVoterWeightRecord;

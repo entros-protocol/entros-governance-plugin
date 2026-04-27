@@ -71,7 +71,7 @@ anchor build
 ```
 
 Requires:
-- Anchor 0.31.1
+- Anchor 0.32.1
 - Solana CLI 2.2.1
 - Rust 1.91.0
 
@@ -100,7 +100,7 @@ npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| anchor-lang | 0.31.1 | Anchor framework |
+| anchor-lang | 0.32.1 | Anchor framework |
 | spl-governance-mythic | 3.1.2 | Realm data validation |
 | spl-governance-addin-api-mythic | 0.1.6 | VoterWeightRecord type |
 | solana-program | 2.2.1 | Solana runtime |
