@@ -26,6 +26,12 @@ pub fn update_registrar(
     min_trust_score: u16,
     max_verification_age: i64,
 ) -> Result<()> {
+    // Same constraint as create_registrar: zero / negative is silent DoS.
+    require!(
+        max_verification_age > 0,
+        EntrosVoterError::InvalidMaxVerificationAge
+    );
+
     let governance_program_id = ctx.accounts.registrar.governance_program_id;
     let governing_token_mint = ctx.accounts.registrar.governing_token_mint;
 

@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 
+use crate::error::EntrosVoterError;
 use crate::state::*;
 
 #[derive(Accounts)]
@@ -25,6 +26,16 @@ pub struct CreateVoterWeightRecord<'info> {
     )]
     pub voter_weight_record: Account<'info, VoterWeightRecord>,
 
+    /// Must sign — proves ownership of the wallet that the VWR represents.
+    /// Without this constraint, anyone could create a VWR for another
+    /// wallet's `governing_token_owner` (front-running griefing: prevent
+    /// the legitimate user from initializing their own record).
+    /// `payer` may be the same key or a separate fee-paying wallet.
+    /// Verified at the runtime level via `require_keys_eq!` below
+    /// (constraint syntax can't bind a Signer to an instruction-arg
+    /// `Pubkey` directly).
+    pub governing_token_owner_signer: Signer<'info>,
+
     #[account(mut)]
     pub payer: Signer<'info>,
 
@@ -35,6 +46,12 @@ pub fn create_voter_weight_record(
     ctx: Context<CreateVoterWeightRecord>,
     governing_token_owner: Pubkey,
 ) -> Result<()> {
+    require_keys_eq!(
+        ctx.accounts.governing_token_owner_signer.key(),
+        governing_token_owner,
+        EntrosVoterError::GoverningTokenOwnerSignerMismatch
+    );
+
     let voter_weight_record = &mut ctx.accounts.voter_weight_record;
     let registrar = &ctx.accounts.registrar;
 

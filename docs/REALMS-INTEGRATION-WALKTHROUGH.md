@@ -110,6 +110,8 @@ In your Realm's settings on `app.realms.today`:
 
 The Realm now expects all voter weight calculations to come from the Entros plugin.
 
+> **UI version note:** the exact menu path can drift between Realms releases. If you can't find "Custom voting program ID" under Settings → Realm Settings, check Settings → Advanced. Refer to current Realms documentation if neither location matches your installation.
+
 ### Step 2: Create the registrar (DAO admin, one-time)
 
 The registrar holds the DAO's policy configuration: what minimum Trust Score is required, how recent the verification must be.

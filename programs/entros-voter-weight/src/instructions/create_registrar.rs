@@ -40,6 +40,16 @@ pub fn create_registrar(
     min_trust_score: u16,
     max_verification_age: i64,
 ) -> Result<()> {
+    // max_verification_age=0 (or negative) is silent DoS — every voter's
+    // age check `age < max_verification_age` would always fail since
+    // `age` for any recent verification is positive. Reject at registrar
+    // creation so admins get a clean error instead of voters being
+    // unexpectedly locked out.
+    require!(
+        max_verification_age > 0,
+        EntrosVoterError::InvalidMaxVerificationAge
+    );
+
     let governance_program_id = ctx.accounts.governance_program_id.key();
     let realm_key = ctx.accounts.realm.key();
     let governing_token_mint = ctx.accounts.governing_token_mint.key();

@@ -203,12 +203,19 @@ export function buildCreateVoterWeightRecordInstruction(
   disc.copy(data, 0);
   voterKey.toBuffer().copy(data, 8);
 
+  // Account order MUST match the Rust struct field order in
+  // CreateVoterWeightRecord<'info>: registrar → voter_weight_record →
+  // governing_token_owner_signer → payer → system_program.
+  // governing_token_owner_signer was added in 1.x to gate VWR creation
+  // on signer-equality with the instruction's `governing_token_owner`
+  // arg (closes the front-running griefing case).
   return {
     instruction: new TransactionInstruction({
       programId: PLUGIN_PROGRAM_ID,
       keys: [
         { pubkey: registrarPda, isSigner: false, isWritable: false },
         { pubkey: vwrPda, isSigner: false, isWritable: true },
+        { pubkey: voterKey, isSigner: true, isWritable: false },
         { pubkey: payerKey, isSigner: true, isWritable: true },
         {
           pubkey: SystemProgram.programId,

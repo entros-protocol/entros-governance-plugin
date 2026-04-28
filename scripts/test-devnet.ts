@@ -211,6 +211,7 @@ function buildCreateVoterWeightRecordInstruction(
       keys: [
         { pubkey: registrarPda, isSigner: false, isWritable: false },
         { pubkey: vwrPda, isSigner: false, isWritable: true },
+        { pubkey: voterKey, isSigner: true, isWritable: false },
         { pubkey: payerKey, isSigner: true, isWritable: true },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
