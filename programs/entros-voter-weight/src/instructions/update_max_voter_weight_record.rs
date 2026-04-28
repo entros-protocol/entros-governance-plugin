@@ -31,6 +31,14 @@ pub fn update_max_voter_weight_record(
     ctx: Context<UpdateMaxVoterWeightRecord>,
     max_voter_weight: u64,
 ) -> Result<()> {
+    // max_voter_weight=0 silently deadlocks governance quorum (no quorum
+    // can be reached). Reject at the admin instruction so misconfigurations
+    // surface immediately rather than after the first vote attempt.
+    require!(
+        max_voter_weight > 0,
+        EntrosVoterError::InvalidMaxVoterWeight
+    );
+
     let governance_program_id = ctx.accounts.registrar.governance_program_id;
     let governing_token_mint = ctx.accounts.registrar.governing_token_mint;
 

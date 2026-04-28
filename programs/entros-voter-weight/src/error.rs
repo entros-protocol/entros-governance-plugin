@@ -34,4 +34,13 @@ pub enum EntrosVoterError {
 
     #[msg("Realm has no authority configured")]
     RealmHasNoAuthority,
+
+    #[msg("Voter weight record owner mismatch — instruction's governing_token_owner must match the signer")]
+    GoverningTokenOwnerSignerMismatch,
+
+    #[msg("max_verification_age must be greater than zero")]
+    InvalidMaxVerificationAge,
+
+    #[msg("max_voter_weight must be greater than zero")]
+    InvalidMaxVoterWeight,
 }

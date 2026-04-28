@@ -218,7 +218,9 @@ describe("entros-voter-weight integration", () => {
       vwrPda = result.vwrPda;
 
       const tx = new Transaction().add(result.instruction);
-      await sendAndConfirmTransaction(connection, tx, [payer]);
+      // VOTER_A must sign because the new `governing_token_owner_signer`
+      // constraint binds the VWR creation to the wallet it represents.
+      await sendAndConfirmTransaction(connection, tx, [payer, VOTER_A]);
 
       const account = await connection.getAccountInfo(vwrPda);
       expect(account).to.not.be.null;
@@ -374,7 +376,7 @@ describe("entros-voter-weight integration", () => {
       );
       failVwrA = vwrA.vwrPda;
       const vwrATx = new Transaction().add(vwrA.instruction);
-      await sendAndConfirmTransaction(connection, vwrATx, [payer]);
+      await sendAndConfirmTransaction(connection, vwrATx, [payer, VOTER_A]);
 
       const vwrB = buildCreateVoterWeightRecordInstruction(
         failRegistrarPda,
@@ -385,7 +387,7 @@ describe("entros-voter-weight integration", () => {
       );
       failVwrB = vwrB.vwrPda;
       const vwrBTx = new Transaction().add(vwrB.instruction);
-      await sendAndConfirmTransaction(connection, vwrBTx, [payer]);
+      await sendAndConfirmTransaction(connection, vwrBTx, [payer, VOTER_B]);
     });
 
     it("rejects update with no remaining_accounts", async () => {
@@ -499,7 +501,7 @@ describe("entros-voter-weight integration", () => {
         payer.publicKey
       );
       const expVwrTx = new Transaction().add(expVwr.instruction);
-      await sendAndConfirmTransaction(connection, expVwrTx, [payer]);
+      await sendAndConfirmTransaction(connection, expVwrTx, [payer, VOTER_A]);
 
       const ix = buildUpdateVoterWeightRecordInstruction(
         expRegistrar.registrarPda,
@@ -558,7 +560,7 @@ describe("entros-voter-weight integration", () => {
       );
       closeVwrPda = vwr.vwrPda;
       const vwrTx = new Transaction().add(vwr.instruction);
-      await sendAndConfirmTransaction(connection, vwrTx, [payer]);
+      await sendAndConfirmTransaction(connection, vwrTx, [payer, VOTER_A]);
     });
 
     it("rejects close with wrong voter authority", async () => {
