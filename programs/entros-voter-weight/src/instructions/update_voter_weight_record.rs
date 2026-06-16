@@ -17,6 +17,11 @@ const IDENTITY_LAST_VERIFICATION_OFFSET: usize = 48;
 const IDENTITY_TRUST_SCORE_OFFSET: usize = 60;
 /// Minimum account data length to read through trust_score
 const IDENTITY_MIN_DATA_LEN: usize = 62;
+/// Anchor account discriminator for IdentityState = sha256("account:IdentityState")[0..8].
+/// Guards the raw-byte read below against type confusion: an account owned by the
+/// Entros Anchor program at the expected PDA but of a different account type must not
+/// be reinterpreted as IdentityState.
+const IDENTITY_DISCRIMINATOR: [u8; 8] = [156, 32, 87, 93, 52, 155, 248, 207];
 
 #[derive(Accounts)]
 pub struct UpdateVoterWeightRecord<'info> {
@@ -78,6 +83,15 @@ pub fn update_voter_weight_record<'info>(
     let data = identity_info.try_borrow_data()?;
     require!(
         data.len() >= IDENTITY_MIN_DATA_LEN,
+        EntrosVoterError::InvalidIdentityData
+    );
+
+    // 4b. Verify the Anchor account discriminator. Owner + PDA checks alone do not
+    // prevent type confusion: a different account type owned by the Entros Anchor
+    // program at the expected PDA would otherwise have its bytes read as a trust
+    // score and timestamp. The length check above guarantees data[..8] is in bounds.
+    require!(
+        data[..8] == IDENTITY_DISCRIMINATOR,
         EntrosVoterError::InvalidIdentityData
     );
 
