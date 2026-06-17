@@ -1,9 +1,12 @@
 /**
  * Generates pre-serialized IdentityState account fixtures for integration tests.
  *
- * Creates two test voter accounts:
+ * Creates three test voter accounts:
  * - VOTER_A: trust_score=200 (passes min_trust_score=100)
  * - VOTER_B: trust_score=50 (fails min_trust_score=100)
+ * - VOTER_C: trust_score=200 but a WRONG account discriminator — exercises the
+ *   discriminator type-confusion guard in update_voter_weight_record (owner + PDA
+ *   pass; only the discriminator check rejects).
  *
  * Outputs JSON files that the Anchor test validator loads via [[test.validator.account]].
  *
@@ -35,9 +38,23 @@ const VOTER_B_SECRET = new Uint8Array([
   60,233,160,57,79,217,12,116,14,199,224,122,17,244,146,232,
 ]);
 
+// VOTER_C: high trust score (200), but its fixture carries a WRONG account
+// discriminator. Owner + PDA pass; only the discriminator type-confusion guard
+// in update_voter_weight_record rejects it.
+const VOTER_C_SECRET = new Uint8Array([
+  94,31,55,141,69,236,105,147,234,20,85,165,247,47,215,59,
+  77,222,67,95,93,144,57,151,115,136,105,29,15,181,192,140,
+  227,49,209,215,148,113,232,115,251,223,165,251,109,253,0,60,
+  81,61,52,187,251,15,177,100,255,43,41,25,156,243,154,154,
+]);
+
 const IDENTITY_STATE_DISCRIMINATOR = Buffer.from([
   156, 32, 87, 93, 52, 155, 248, 207,
 ]);
+
+// A deliberately wrong discriminator (stand-in for a different entros-anchor
+// account type) — must be rejected before the raw-offset read.
+const WRONG_DISCRIMINATOR = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
 
 const IDENTITY_STATE_SIZE = 207;
 
@@ -45,12 +62,13 @@ function buildIdentityStateData(
   owner: PublicKey,
   trustScore: number,
   lastVerificationTimestamp: number,
+  discriminator: Buffer = IDENTITY_STATE_DISCRIMINATOR,
 ): Buffer {
   const data = Buffer.alloc(IDENTITY_STATE_SIZE);
   let offset = 0;
 
   // discriminator (8)
-  IDENTITY_STATE_DISCRIMINATOR.copy(data, offset);
+  discriminator.copy(data, offset);
   offset += 8;
 
   // owner (32)
@@ -98,56 +116,56 @@ function writeFixture(
   fs.writeFileSync(filepath, JSON.stringify(fixture, null, 2));
 }
 
+function identityPda(voter: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("identity"), voter.toBuffer()],
+    ENTROS_ANCHOR_PROGRAM_ID,
+  )[0];
+}
+
 function main() {
   const voterA = Keypair.fromSecretKey(VOTER_A_SECRET);
   const voterB = Keypair.fromSecretKey(VOTER_B_SECRET);
+  const voterC = Keypair.fromSecretKey(VOTER_C_SECRET);
 
-  console.log("VOTER_A pubkey:", voterA.publicKey.toBase58());
-  console.log("VOTER_B pubkey:", voterB.publicKey.toBase58());
+  const pdaA = identityPda(voterA.publicKey);
+  const pdaB = identityPda(voterB.publicKey);
+  const pdaC = identityPda(voterC.publicKey);
 
-  // Compute IdentityState PDAs
-  const [pdaA] = PublicKey.findProgramAddressSync(
-    [Buffer.from("identity"), voterA.publicKey.toBuffer()],
-    ENTROS_ANCHOR_PROGRAM_ID,
-  );
-  const [pdaB] = PublicKey.findProgramAddressSync(
-    [Buffer.from("identity"), voterB.publicKey.toBuffer()],
-    ENTROS_ANCHOR_PROGRAM_ID,
-  );
+  console.log("VOTER_A pubkey:", voterA.publicKey.toBase58(), "PDA:", pdaA.toBase58());
+  console.log("VOTER_B pubkey:", voterB.publicKey.toBase58(), "PDA:", pdaB.toBase58());
+  console.log("VOTER_C pubkey:", voterC.publicKey.toBase58(), "PDA:", pdaC.toBase58());
 
-  console.log("VOTER_A IdentityState PDA:", pdaA.toBase58());
-  console.log("VOTER_B IdentityState PDA:", pdaB.toBase58());
-
-  // Build account data
-  // last_verification_timestamp = 1700000000 (Nov 2023)
-  // With max_verification_age = 2000000000, this passes until year 2086
+  // Build account data.
+  // last_verification_timestamp = 1700000000 (Nov 2023); with max_verification_age
+  // = 2000000000 this passes until year 2086.
   const dataA = buildIdentityStateData(voterA.publicKey, 200, 1700000000);
   const dataB = buildIdentityStateData(voterB.publicKey, 50, 1700000000);
+  // VOTER_C: trust + recency would pass; only the wrong discriminator triggers rejection.
+  const dataC = buildIdentityStateData(
+    voterC.publicKey,
+    200,
+    1700000000,
+    WRONG_DISCRIMINATOR,
+  );
 
-  // Write fixtures
   const fixturesDir = path.resolve(__dirname, "../tests/fixtures");
-  writeFixture(
-    path.join(fixturesDir, "identity-state-a.json"),
-    pdaA,
-    dataA,
-    ENTROS_ANCHOR_PROGRAM_ID,
-  );
-  writeFixture(
-    path.join(fixturesDir, "identity-state-b.json"),
-    pdaB,
-    dataB,
-    ENTROS_ANCHOR_PROGRAM_ID,
-  );
+  writeFixture(path.join(fixturesDir, "identity-state-a.json"), pdaA, dataA, ENTROS_ANCHOR_PROGRAM_ID);
+  writeFixture(path.join(fixturesDir, "identity-state-b.json"), pdaB, dataB, ENTROS_ANCHOR_PROGRAM_ID);
+  writeFixture(path.join(fixturesDir, "identity-state-c.json"), pdaC, dataC, ENTROS_ANCHOR_PROGRAM_ID);
 
   console.log("\nFixtures written to tests/fixtures/");
   console.log("\nAdd to Anchor.toml:");
-  console.log(`[[test.validator.account]]`);
-  console.log(`address = "${pdaA.toBase58()}"`);
-  console.log(`filename = "tests/fixtures/identity-state-a.json"`);
-  console.log();
-  console.log(`[[test.validator.account]]`);
-  console.log(`address = "${pdaB.toBase58()}"`);
-  console.log(`filename = "tests/fixtures/identity-state-b.json"`);
+  for (const [pda, file] of [
+    [pdaA, "identity-state-a.json"],
+    [pdaB, "identity-state-b.json"],
+    [pdaC, "identity-state-c.json"],
+  ] as const) {
+    console.log(`[[test.validator.account]]`);
+    console.log(`address = "${pda.toBase58()}"`);
+    console.log(`filename = "tests/fixtures/${file}"`);
+    console.log();
+  }
 }
 
 main();

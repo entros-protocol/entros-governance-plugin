@@ -36,3 +36,7 @@ filename = "tests/fixtures/identity-state-a.json"
 [[test.validator.account]]
 address = "73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ"
 filename = "tests/fixtures/identity-state-b.json"
+
+[[test.validator.account]]
+address = "6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP"
+filename = "tests/fixtures/identity-state-c.json"

@@ -49,6 +49,18 @@ const VOTER_B = Keypair.fromSecretKey(
   ])
 );
 
+// VOTER_C: trust score 200 + recent verification, but its IdentityState fixture
+// carries a WRONG account discriminator (must match scripts/generate-test-fixtures.ts).
+// Owner + PDA pass; only the discriminator guard in update_voter_weight_record rejects.
+const VOTER_C = Keypair.fromSecretKey(
+  new Uint8Array([
+    94, 31, 55, 141, 69, 236, 105, 147, 234, 20, 85, 165, 247, 47, 215, 59,
+    77, 222, 67, 95, 93, 144, 57, 151, 115, 136, 105, 29, 15, 181, 192, 140,
+    227, 49, 209, 215, 148, 113, 232, 115, 251, 223, 165, 251, 109, 253, 0, 60,
+    81, 61, 52, 187, 251, 15, 177, 100, 255, 43, 41, 25, 156, 243, 154, 154,
+  ])
+);
+
 const connection = new Connection("http://localhost:8899", "confirmed");
 let payer: Keypair;
 
@@ -64,6 +76,10 @@ const [VOTER_A_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
 );
 const [VOTER_B_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
   [Buffer.from("identity"), VOTER_B.publicKey.toBuffer()],
+  ENTROS_ANCHOR_PROGRAM_ID
+);
+const [VOTER_C_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from("identity"), VOTER_C.publicKey.toBuffer()],
   ENTROS_ANCHOR_PROGRAM_ID
 );
 
@@ -124,6 +140,12 @@ describe("entros-voter-weight integration", () => {
       2 * LAMPORTS_PER_SOL
     );
     await connection.confirmTransaction(sig3);
+
+    const sig4 = await connection.requestAirdrop(
+      VOTER_C.publicKey,
+      2 * LAMPORTS_PER_SOL
+    );
+    await connection.confirmTransaction(sig4);
 
     // Verify fixture accounts are loaded
     const identityA = await connection.getAccountInfo(VOTER_A_IDENTITY_PDA);
@@ -339,6 +361,7 @@ describe("entros-voter-weight integration", () => {
     let failRegistrarPda: PublicKey;
     let failVwrA: PublicKey;
     let failVwrB: PublicKey;
+    let failVwrC: PublicKey;
     let failMint: PublicKey;
 
     before(async () => {
@@ -388,6 +411,17 @@ describe("entros-voter-weight integration", () => {
       failVwrB = vwrB.vwrPda;
       const vwrBTx = new Transaction().add(vwrB.instruction);
       await sendAndConfirmTransaction(connection, vwrBTx, [payer, VOTER_B]);
+
+      const vwrC = buildCreateVoterWeightRecordInstruction(
+        failRegistrarPda,
+        failRealmPda,
+        failMint,
+        VOTER_C.publicKey,
+        payer.publicKey
+      );
+      failVwrC = vwrC.vwrPda;
+      const vwrCTx = new Transaction().add(vwrC.instruction);
+      await sendAndConfirmTransaction(connection, vwrCTx, [payer, VOTER_C]);
     });
 
     it("rejects update with no remaining_accounts", async () => {
@@ -447,6 +481,26 @@ describe("entros-voter-weight integration", () => {
         expect.fail("Should have failed");
       } catch (err: any) {
         expectError(err, 6003); // InvalidIdentityOwner
+      }
+    });
+
+    it("rejects update with wrong identity discriminator", async () => {
+      // VOTER_C's IdentityState fixture is owned by Entros at the correct PDA with a
+      // passing trust score + recent verification, but carries a wrong account
+      // discriminator -- only the discriminator type-confusion guard can reject it.
+      const ix = buildUpdateVoterWeightRecordInstruction(
+        failRegistrarPda,
+        failVwrC,
+        VOTER_C.publicKey,
+        VOTER_C_IDENTITY_PDA
+      );
+
+      const tx = new Transaction().add(ix);
+      try {
+        await sendAndConfirmTransaction(connection, tx, [VOTER_C]);
+        expect.fail("Should have failed");
+      } catch (err: any) {
+        expectError(err, 6004); // InvalidIdentityData (discriminator mismatch)
       }
     });
 
