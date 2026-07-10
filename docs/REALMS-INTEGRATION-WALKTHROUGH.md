@@ -21,14 +21,14 @@ The Entros voter weight plugin is an spl-governance voter-weight addin. When a D
 - Wallet-rotation attacks at the bot level (per-wallet Trust Score must be earned over weeks)
 
 **Catches imperfectly:**
-- Coordinated humans creating multiple Sybil identities. A determined person can vary voice and motion across wallets. Each fake identity costs the attacker ~12 seconds of focused real-time per verification × weeks of sustained behavior to reach meaningful Trust Score, but the cost isn't infinite.
+- Coordinated humans creating multiple Sybil identities. A determined person can vary voice and motion across wallets. Each fake identity costs the attacker ~12 seconds of focused real-time per verification, plus weeks of sustained behavior to reach a meaningful Trust Score.
 
 **Does not catch at all:**
 - Token-based plutocracy (large holders dominating votes — that's tokenomics, use quadratic on top)
 - Off-chain coordination / vote buying (social problem, not behavioral)
 - Compromised wallets where the attacker has both the key AND the verified Anchor
 
-This is why the plugin is positioned as additive. A DAO using only Entros has weaker protection than a DAO using token-voter + Entros + community moderation. Be honest about this with your members.
+This is why the plugin is positioned as additive. It is strongest stacked with token-voter and community moderation, each layer catching what the others miss.
 
 ---
 
@@ -66,7 +66,7 @@ The standard Realms architecture lets you chain voter weight plugins. The recomm
 
 Entros sits at Layer 3. It does NOT replace token holdings, NFT membership, or quadratic weighting. It's a final liveness gate that can be added on top.
 
-For DAOs that already require KYC (Civic, Coinbase Verifications, etc.), Entros is redundant in most cases — KYC catches what Entros catches plus more. **Entros is the primitive for DAOs that explicitly do not want KYC** but still want some bot-resistance signal.
+Entros and KYC solve different problems: KYC ties a vote to a legal identity, Entros proves a live human without collecting one. **Entros is the primitive for DAOs that explicitly do not want KYC** but still want bot-resistance.
 
 ---
 
@@ -79,8 +79,8 @@ For DAOs that already require KYC (Civic, Coinbase Verifications, etc.), Entros 
 - DAOs that want a "verified human" badge visible in their UI
 
 **Marginal fit:**
-- DAOs with strict KYC already in place (redundant)
-- Treasury-control DAOs (need stronger gates than behavioral biometrics — combine with multi-sig + KYC)
+- DAOs with strict KYC already in place (KYC already covers the liveness signal)
+- Treasury-control DAOs (pair with multi-sig and KYC for high-value control)
 - Single-vote-per-month DAOs (recency requirement is friction without much benefit)
 
 **Bad fit:**
@@ -211,7 +211,7 @@ DAO uses quadratic voting (sqrt of tokens) AND Entros gating. Caps both whale do
 
 ### Pattern 4: Entros only (rare, low-stakes only)
 
-For DAOs where membership is open and the only gate is "are you a recently verified human." Useful for community polling or sentiment proposals where economic stake doesn't apply. Not recommended for any vote that controls real value.
+For DAOs where membership is open and the only gate is "are you a recently verified human." Best for community polling or sentiment proposals where economic stake doesn't apply. For votes that control real value, stack it with token or multi-sig gates.
 
 ---
 

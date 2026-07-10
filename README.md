@@ -10,11 +10,11 @@ Optional behavioral gate that layers on top of existing voter weight plugins (to
 
 **Catches well:** automated voting bots, synthetic-voice attacks, dormant wallets resurrected to vote, wallet-rotation at the bot level.
 
-**Catches imperfectly:** coordinated humans intentionally varying voice and motion across wallets to create Sybil identities. Each fake identity costs the attacker ~12 seconds of focused real-time per verification × weeks of sustained behavior to reach meaningful Trust Score, but the cost isn't infinite. Be honest with your members about this.
+**Catches imperfectly:** coordinated humans intentionally varying voice and motion across wallets to create Sybil identities. Each fake identity costs the attacker ~12 seconds of focused real-time per verification, plus weeks of sustained behavior to reach a meaningful Trust Score.
 
 **Does not catch at all:** token-based plutocracy, off-chain coordination / vote buying, compromised wallets where the attacker has both the key and the verified Anchor.
 
-This is why the plugin is positioned as additive. A DAO using only Entros has weaker protection than a DAO using token-voter + Entros + community moderation. Full integration walkthrough including stacking patterns and configuration tuning: [`docs/REALMS-INTEGRATION-WALKTHROUGH.md`](docs/REALMS-INTEGRATION-WALKTHROUGH.md).
+This is why the plugin is positioned as additive. It is strongest stacked with token-voter and community moderation, each layer catching what the others miss. Full integration walkthrough including stacking patterns and configuration tuning: [`docs/REALMS-INTEGRATION-WALKTHROUGH.md`](docs/REALMS-INTEGRATION-WALKTHROUGH.md).
 
 ## Where it fits
 
