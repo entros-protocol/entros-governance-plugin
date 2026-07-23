@@ -120,14 +120,16 @@ Call `create_registrar` (via Anchor client or the plugin's helper script) with:
 
 | Parameter | Recommended starting value | Rationale |
 |---|---|---|
-| `min_trust_score` | `100` | Excludes brand-new identities, requires ~2-4 weeks of sustained verifications |
+| `min_trust_score` | `200` | Requires activity across ~2 distinct weeks, not just a single verification (which scores ~100). Excludes brand-new identities |
 | `max_verification_age` | `86400` (24h) | Voter must have verified in the last day; balances UX with bot-staleness |
 | `realm` | Your Realm's pubkey | Binds the registrar to this specific DAO |
+
+**Trust Score scale.** Under the normalized weekly-bin model, a single recent verification scores ~100; each additional active week adds a decaying amount (~91, ~83, ~75…), so sustained activity across N distinct weeks accumulates, topping out near ~650 for ~12 active weeks (plus a small age bonus). The score reflects *current* standing and decays as recent activity ages, so a threshold effectively requires recent, sustained verification. Pick `min_trust_score` from that scale.
 
 ```typescript
 // Example using @coral-xyz/anchor
 await program.methods
-  .createRegistrar(100, new BN(86400))
+  .createRegistrar(200, new BN(86400))
   .accounts({
     realm: realmPubkey,
     realmAuthority: realmAuthority.publicKey,
@@ -185,11 +187,11 @@ Realms supports this via plugin chaining. The economic stake comes from token-vo
 
 | Use case | min_trust_score | max_verification_age | Stack with |
 |---|---|---|---|
-| Casual community voting | 50 | 7 days (604800s) | token-voter |
-| Standard governance | 100 | 24h (86400s) | token-voter |
-| Treasury proposals | 250 | 6h (21600s) | token-voter + multi-sig |
+| Casual community voting | 100 | 7 days (604800s) | token-voter |
+| Standard governance | 200 | 24h (86400s) | token-voter |
+| Treasury proposals | 350 | 6h (21600s) | token-voter + multi-sig |
 | Constitution amendments | 500 | 1h (3600s) | token-voter + KYC |
-| Anti-Sybil airdrops via on-chain vote | 100 | 24h | token-voter + quadratic-voter |
+| Anti-Sybil airdrops via on-chain vote | 200 | 24h | token-voter + quadratic-voter |
 
 These are starting points. Tune based on your member base's verification cadence.
 
@@ -221,7 +223,7 @@ For DAOs where membership is open and the only gate is "are you a recently verif
 
 2. **Entros IdentityState PDA must exist.** Voters who haven't completed at least one Entros verification on `entros.io/verify` will fail the gate silently. Surface a clear "Verify your humanness with Entros" CTA in your DAO's UI before showing the vote button.
 
-3. **Trust Score takes time to grow.** A brand-new identity starts at Trust Score 0. The default `min_trust_score=100` requires ~2-4 weeks of sustained weekly verifications. For DAOs with new members or short voting windows, consider a lower threshold initially.
+3. **Trust Score takes time to grow.** A brand-new identity starts at Trust Score 0; a single verification scores ~100, and the recommended `min_trust_score=200` requires activity across ~2 distinct weeks. Higher thresholds require more sustained weekly activity (see the Trust Score scale above). For DAOs with new members or short voting windows, consider a lower threshold initially.
 
 4. **Devnet vs mainnet PDAs.** The Entros IdentityState PDA seed is wallet-specific but program-id-specific. A user verified on devnet does NOT automatically have a mainnet anchor (and vice versa). DAOs operating on mainnet need members to verify on mainnet specifically.
 
