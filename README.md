@@ -10,7 +10,7 @@ Optional behavioral gate that layers on top of existing voter weight plugins (to
 
 **Catches well:** automated voting bots, synthetic-voice attacks, dormant wallets resurrected to vote, wallet-rotation at the bot level.
 
-**Catches imperfectly:** coordinated humans intentionally varying voice and motion across wallets to create Sybil identities. Each fake identity costs the attacker ~12 seconds of focused real-time per verification, plus weeks of sustained behavior to reach a meaningful Trust Score.
+**Catches imperfectly:** coordinated humans intentionally varying voice and motion across wallets. Cross-Anchor comparison is the layer that applies here, and its sensitivity is bounded by how much a person can vary their own behavioral signature. The per-Anchor cadence requirement means any identity that clears a meaningful Trust Score carries weeks of scored history behind it.
 
 **Does not catch at all:** token-based plutocracy, off-chain coordination / vote buying, compromised wallets where the attacker has both the key and the verified Anchor.
 

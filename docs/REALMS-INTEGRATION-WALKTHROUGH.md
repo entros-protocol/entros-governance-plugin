@@ -21,7 +21,7 @@ The Entros voter weight plugin is an spl-governance voter-weight addin. When a D
 - Wallet-rotation attacks at the bot level (per-wallet Trust Score must be earned over weeks)
 
 **Catches imperfectly:**
-- Coordinated humans creating multiple Sybil identities. A determined person can vary voice and motion across wallets. Each fake identity costs the attacker ~12 seconds of focused real-time per verification, plus weeks of sustained behavior to reach a meaningful Trust Score.
+- Coordinated humans creating multiple Sybil identities. A determined person can vary voice and motion across wallets. Cross-Anchor comparison is the layer that applies here, and its sensitivity is bounded by how much a person can vary their own behavioral signature. The per-Anchor cadence requirement means any identity that clears a meaningful Trust Score carries weeks of scored history behind it.
 
 **Does not catch at all:**
 - Token-based plutocracy (large holders dominating votes — that's tokenomics, use quadratic on top)
