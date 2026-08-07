@@ -24,5 +24,5 @@ impl Registrar {
         + 2   // min_trust_score
         + 8   // max_verification_age
         + 64; // reserved
-    // Total: 178 bytes
+              // Total: 178 bytes
 }

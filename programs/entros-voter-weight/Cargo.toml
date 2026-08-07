@@ -1,7 +1,7 @@
 [package]
 name = "entros-voter-weight"
 version = "0.1.0"
-description = "SPL Governance voter weight plugin for Entros Protocol human verification"
+description = "SPL Governance voter weight plugin for Entros verification state"
 license = "MIT"
 edition = "2021"
 
@@ -22,4 +22,3 @@ anchor-lang = { workspace = true }
 spl-governance = { workspace = true }
 spl-governance-addin-api = { workspace = true }
 borsh_1 = { workspace = true }
-solana-program = { workspace = true }

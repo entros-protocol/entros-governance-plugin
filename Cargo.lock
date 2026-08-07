@@ -641,7 +641,6 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "borsh 1.5.5",
- "solana-program",
  "spl-governance-addin-api-mythic",
  "spl-governance-mythic",
 ]

@@ -1,3 +1,5 @@
+#![allow(unexpected_cfgs)] // Anchor emits SBF-only cfg values during host builds.
+
 use anchor_lang::prelude::*;
 
 pub mod error;
@@ -54,9 +56,7 @@ pub mod entros_voter_weight {
         instructions::close_voter_weight_record::close_voter_weight_record(ctx)
     }
 
-    pub fn create_max_voter_weight_record(
-        ctx: Context<CreateMaxVoterWeightRecord>,
-    ) -> Result<()> {
+    pub fn create_max_voter_weight_record(ctx: Context<CreateMaxVoterWeightRecord>) -> Result<()> {
         instructions::create_max_voter_weight_record::create_max_voter_weight_record(ctx)
     }
 

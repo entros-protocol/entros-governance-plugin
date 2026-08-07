@@ -38,9 +38,7 @@ pub struct CreateMaxVoterWeightRecord<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn create_max_voter_weight_record(
-    ctx: Context<CreateMaxVoterWeightRecord>,
-) -> Result<()> {
+pub fn create_max_voter_weight_record(ctx: Context<CreateMaxVoterWeightRecord>) -> Result<()> {
     let registrar = &ctx.accounts.registrar;
 
     let realm_data = realm::get_realm_data_for_governing_token_mint(
