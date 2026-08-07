@@ -1,271 +1,109 @@
-# Realms Integration Walkthrough
+# Realms integration status and plan
 
-How to add Entros behavioral verification to a Realms DAO on Solana.
+The Entros voter-weight addin is deployed on Solana devnet. It is an on-chain prototype, not a turnkey Realms UI integration.
 
----
+## Current on-chain behavior
 
-## What this is
+The program stores one registrar for a realm and governing token mint. The realm authority configures minimum Trust Score and maximum verification age.
 
-> **Optional behavioral gate that layers on top of existing voter weight plugins (token-voter, NFT-voter, quadratic). Catches automated voting bots and gives DAOs a privacy-preserving signal when they don't want to require KYC. One signal in a stack — not a replacement for tokenomics or community moderation.**
+A voter creates a `VoterWeightRecord` for their wallet. Before a governance action, the voter can request a record update.
 
-The Entros voter weight plugin is an spl-governance voter-weight addin. When a DAO configures it, every vote requires the voter to have a recently active Entros Anchor with a Trust Score above the DAO's threshold. It's designed to compose with token-voter, NFT-voter, quadratic voting, or any other voter weight plugin — not replace them.
+The update reads the wallet's Entros `IdentityState` account. It checks the account owner, discriminator, wallet binding, Trust Score, and verification recency.
 
----
+An eligible update writes binary voter weight `1` with a 100-slot expiry. An ineligible update returns an error and writes no zero-weight record.
 
-## What it catches and what it doesn't
+The program does not run behavioral checks. It trusts the Anchor state produced by the wider Entros verification flow.
 
-**Catches well:**
-- Automated voting bots (no real human capture, fails Tier 1 acoustic checks + TTS detection + cross-modal coupling)
-- Synthetic-voice attacks (TTS-driven scripts trying to vote at scale)
-- Dormant wallets resurrected to vote (verification recency requirement)
-- Wallet-rotation attacks at the bot level (per-wallet Trust Score must be earned over weeks)
+## Current limitations
 
-**Catches imperfectly:**
-- Coordinated humans creating multiple Sybil identities. A determined person can vary voice and motion across wallets. Cross-Anchor comparison is the layer that applies here, and its sensitivity is bounded by how much a person can vary their own behavioral signature. The per-Anchor cadence requirement means any identity that clears a meaningful Trust Score carries weeks of scored history behind it.
+Normal Realms UI execution requires a JS client that constructs the addin instructions. This repository does not contain that client.
 
-**Does not catch at all:**
-- Token-based plutocracy (large holders dominating votes — that's tokenomics, use quadratic on top)
-- Off-chain coordination / vote buying (social problem, not behavioral)
-- Compromised wallets where the attacker has both the key AND the verified Anchor
+The current registrar stores no predecessor plugin ID. The update instruction accepts no input voter-weight record.
 
-This is why the plugin is positioned as additive. It is strongest stacked with token-voter and community moderation, each layer catching what the others miss.
+The program therefore cannot chain with token, NFT, or quadratic voter-weight plugins today. Composition remains planned work.
 
----
+Only the devnet program is deployed:
 
-## Where Entros fits in the voter-weight-plugin stack
-
-The standard Realms architecture lets you chain voter weight plugins. The recommended pattern:
-
-```
-                    Voter casts vote
-                          │
-                          ▼
-       ┌─────────────────────────────────────────┐
-       │  Layer 1: Economic stake                │
-       │  token-voter or NFT-voter               │
-       │  (proves skin in the game)              │
-       └─────────────────────────────────────────┘
-                          │
-                          ▼
-       ┌─────────────────────────────────────────┐
-       │  Layer 2: Voting fairness (optional)    │
-       │  quadratic-voter                        │
-       │  (caps whale dominance)                 │
-       └─────────────────────────────────────────┘
-                          │
-                          ▼
-       ┌─────────────────────────────────────────┐
-       │  Layer 3: Behavioral signal (Entros)    │
-       │  entros-voter-weight                    │
-       │  (proves recently active human)         │
-       └─────────────────────────────────────────┘
-                          │
-                          ▼
-                 Vote accepted by realm
+```text
+99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534
 ```
 
-Entros sits at Layer 3. It does NOT replace token holdings, NFT membership, or quadratic weighting. It's a final liveness gate that can be added on top.
+There is no Entros mainnet deployment.
 
-Entros and KYC solve different problems: KYC ties a vote to a legal identity, Entros proves a live human without collecting one. **Entros is the primitive for DAOs that explicitly do not want KYC** but still want bot-resistance.
+## Intended integration
 
----
+The planned Realms client will:
 
-## When to use it
+1. Derive the registrar and voter-weight record addresses.
+2. Create missing voter-weight records.
+3. Add `update_voter_weight_record` before the governance action.
+4. Surface eligibility errors before wallet approval.
+5. Derive its cluster from the active connection.
+6. Register with the supported Realms UI plugin interface.
 
-**Good fit:**
-- Privacy-conscious DAOs that won't require government ID
-- DAOs experiencing bot-vote noise on low-stakes proposals
-- Token-gated DAOs where the cost of buying tokens is low (cheap Sybil = vote farms)
-- DAOs that want a "verified human" badge visible in their UI
+The planned chaining extension will:
 
-**Marginal fit:**
-- DAOs with strict KYC already in place (KYC already covers the liveness signal)
-- Treasury-control DAOs (pair with multi-sig and KYC for high-value control)
-- Single-vote-per-month DAOs (recency requirement is friction without much benefit)
+1. Add an optional predecessor program ID to the registrar.
+2. Accept and validate the predecessor `VoterWeightRecord`.
+3. Preserve the predecessor weight after Entros eligibility passes.
+4. Reject mismatched realm, mint, owner, action, or expiry fields.
+5. Test token, NFT, and quadratic composition paths.
 
-**Bad fit:**
-- DAOs targeting maximum participation (Entros adds 12s of friction per voting session)
-- DAOs where members are pseudonymous developers with strong reputation already established (community trust does the work)
+This design keeps Entros as an eligibility gate. It does not replace economic or membership weight.
 
----
+## Manual program testing
 
-## Integration steps
+Use the repository integration suite to test the deployed account model locally:
 
-### Prerequisites
+```bash
+npx tsx scripts/generate-test-fixtures.ts
+GOVERNANCE_TEST_LEDGER="$(mktemp -d /tmp/entros-governance.XXXXXX)"
 
-- A Realms DAO created on `app.realms.today` (devnet or mainnet)
-- DAO admin access (community mint authority)
-- Realms V2 UI compatibility (custom voting program field is supported by default)
-
-### Step 1: Configure the custom voting program
-
-In your Realm's settings on `app.realms.today`:
-
-1. Navigate to your Realm → Settings → Realm Settings
-2. Find "Custom voting program ID" (under voter weight configuration)
-3. Paste the Entros voter weight program ID:
-   - **Devnet:** `99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534`
-   - **Mainnet:** *(post-mainnet-launch)*
-4. Save the configuration
-
-The Realm now expects all voter weight calculations to come from the Entros plugin.
-
-> **UI version note:** the exact menu path can drift between Realms releases. If you can't find "Custom voting program ID" under Settings → Realm Settings, check Settings → Advanced. Refer to current Realms documentation if neither location matches your installation.
-
-### Step 2: Create the registrar (DAO admin, one-time)
-
-The registrar holds the DAO's policy configuration: what minimum Trust Score is required, how recent the verification must be.
-
-Call `create_registrar` (via Anchor client or the plugin's helper script) with:
-
-| Parameter | Recommended starting value | Rationale |
-|---|---|---|
-| `min_trust_score` | `200` | Requires activity across ~2 distinct weeks, not just a single verification (which scores ~100). Excludes brand-new identities |
-| `max_verification_age` | `86400` (24h) | Voter must have verified in the last day; balances UX with bot-staleness |
-| `realm` | Your Realm's pubkey | Binds the registrar to this specific DAO |
-
-**Trust Score scale.** Under the normalized weekly-bin model, a single recent verification scores ~100; each additional active week adds a decaying amount (~91, ~83, ~75…), so sustained activity across N distinct weeks accumulates, topping out near ~650 for ~12 active weeks (plus a small age bonus). The score reflects *current* standing and decays as recent activity ages, so a threshold effectively requires recent, sustained verification. Pick `min_trust_score` from that scale.
-
-```typescript
-// Example using @coral-xyz/anchor
-await program.methods
-  .createRegistrar(200, new BN(86400))
-  .accounts({
-    realm: realmPubkey,
-    realmAuthority: realmAuthority.publicKey,
-    governingTokenMint: communityMint,
-    registrar: registrarPda,
-    payer: realmAuthority.publicKey,
-    systemProgram: SystemProgram.programId,
-  })
-  .rpc();
+solana-test-validator \
+  --ledger "$GOVERNANCE_TEST_LEDGER" \
+  --bpf-program 99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534 target/deploy/entros_voter_weight.so \
+  --bpf-program GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2 tests/fixtures/entros_anchor.so \
+  --bpf-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw tests/fixtures/spl_governance.so \
+  --account 63cKuvoe9WuNH9Ds6aXF7iSc4jHmJc4ZkxdHTaitJ5tr tests/fixtures/identity-state-a.json \
+  --account 73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ tests/fixtures/identity-state-b.json \
+  --account 6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP tests/fixtures/identity-state-c.json \
+  --quiet
 ```
 
-### Step 3: Voters initialize their voter weight records
+Run the test suite in another terminal:
 
-Each member who wants to vote needs a one-time `create_voter_weight_record` call. This is typically wrapped in a "Connect Wallet → Verify with Entros" flow on the DAO's frontend, or members can do it from a CLI helper.
-
-```typescript
-await program.methods
-  .createVoterWeightRecord()
-  .accounts({
-    registrar: registrarPda,
-    voterWeightRecord: voterWeightRecordPda,
-    governingTokenOwner: voterPubkey,
-    payer: voterPubkey,
-    systemProgram: SystemProgram.programId,
-  })
-  .rpc();
+```bash
+npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
 ```
 
-Records are "born expired" — they need an `update_voter_weight_record` call before each vote.
+The current suite contains 20 unit tests and 19 integration tests.
 
-### Step 4: Per-vote update (happens transparently in the same transaction)
+## DAO policy choices
 
-When a member casts a vote on the Realms UI, the wallet bundles `update_voter_weight_record` immediately before the governance instruction. The plugin reads the voter's Entros IdentityState PDA, validates Trust Score and recency, and sets `voter_weight = 1` with a ~40-second expiry. The governance program then accepts the vote.
+A future integrator must choose a minimum Trust Score and verification-age limit. Those values are governance policy, not protocol defaults.
 
-If the voter doesn't meet the threshold:
-- Trust Score below `min_trust_score` → `voter_weight = 0` → vote silently has no effect
-- Verification older than `max_verification_age` → same outcome
-- No Entros Anchor exists → same outcome
+Short recency windows add user friction. High Trust Score floors exclude new Anchors. Test both with representative members before enabling a governance gate.
 
-### Step 5 (recommended): Stack with token-voter
+Entros eligibility does not prevent wallet compromise, vote buying, or token concentration. DAOs must retain controls for those risks.
 
-Most production deployments will NOT use Entros alone. The standard pattern is:
+## Release gate
 
-```
-Realm config:
-  community voter weight: token-voter (proves token holdings)
-  voter weight addin: entros-voter-weight (proves liveness)
-```
+Do not describe the addin as supported by the normal Realms UI until all items below pass:
 
-Realms supports this via plugin chaining. The economic stake comes from token-voter, the liveness gate comes from Entros. Either alone is weaker than both.
-
----
-
-## Configuration tuning
-
-| Use case | min_trust_score | max_verification_age | Stack with |
-|---|---|---|---|
-| Casual community voting | 100 | 7 days (604800s) | token-voter |
-| Standard governance | 200 | 24h (86400s) | token-voter |
-| Treasury proposals | 350 | 6h (21600s) | token-voter + multi-sig |
-| Constitution amendments | 500 | 1h (3600s) | token-voter + KYC |
-| Anti-Sybil airdrops via on-chain vote | 200 | 24h | token-voter + quadratic-voter |
-
-These are starting points. Tune based on your member base's verification cadence.
-
----
-
-## Stacking patterns
-
-### Pattern 1: token-voter + Entros (most common)
-
-DAO requires both token holdings AND a recently verified human Anchor. Voter weight = token amount × (Entros pass: 1 / Entros fail: 0). Effectively gates token-weighted voting on liveness.
-
-### Pattern 2: NFT-voter + Entros
-
-DAO requires a membership NFT AND a recently verified human Anchor. Useful for DAOs where membership is binary (you have the NFT or you don't) and Entros adds the bot filter.
-
-### Pattern 3: quadratic + Entros
-
-DAO uses quadratic voting (sqrt of tokens) AND Entros gating. Caps both whale dominance and bot dominance simultaneously.
-
-### Pattern 4: Entros only (rare, low-stakes only)
-
-For DAOs where membership is open and the only gate is "are you a recently verified human." Best for community polling or sentiment proposals where economic stake doesn't apply. For votes that control real value, stack it with token or multi-sig gates.
-
----
-
-## Gotchas
-
-1. **Voter weight expires fast (~40 seconds).** This is intentional — prevents stale weight records being reused — but means the wallet must call `update_voter_weight_record` and the governance instruction in the same transaction. The Realms UI handles this automatically; custom integrations need to bundle them.
-
-2. **Entros IdentityState PDA must exist.** Voters who haven't completed at least one Entros verification on `entros.io/verify` will fail the gate silently. Surface a clear "Verify your humanness with Entros" CTA in your DAO's UI before showing the vote button.
-
-3. **Trust Score takes time to grow.** A brand-new identity starts at Trust Score 0; a single verification scores ~100, and the recommended `min_trust_score=200` requires activity across ~2 distinct weeks. Higher thresholds require more sustained weekly activity (see the Trust Score scale above). For DAOs with new members or short voting windows, consider a lower threshold initially.
-
-4. **Devnet vs mainnet PDAs.** The Entros IdentityState PDA seed is wallet-specific but program-id-specific. A user verified on devnet does NOT automatically have a mainnet anchor (and vice versa). DAOs operating on mainnet need members to verify on mainnet specifically.
-
-5. **No CPI fallback to entros-anchor.** The plugin reads the IdentityState PDA via raw byte deserialization, not Anchor cross-program-invocation. This is intentional (avoids version-coupling) but means if Entros's account layout changes incompatibly in the future, the plugin must be redeployed. Watch the Entros AUDIT.md for layout changes.
-
-6. **Recency window vs UX friction.** Tight recency (6h) means members must verify before each voting session — high friction. Loose recency (7 days) lets stale verifications pass — lower bot-resistance. There's no universally right answer; tune to your DAO's voting cadence.
-
----
-
-## Reference deployment
-
-| Field | Value |
-|---|---|
-| Devnet program ID | `99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534` |
-| Mainnet program ID | *(pending mainnet launch)* |
-| Source | https://github.com/entros-protocol/entros-governance-plugin |
-| Tests | 38 (20 unit + 18 integration against real spl-governance + entros-anchor genesis programs) |
-| Realms UI | V2 supports custom voting program ID natively, no fork needed |
-
----
-
-## Pre-launch checklist
-
-Before you flip the plugin on for production governance:
-
-- [ ] Test the full vote flow on devnet with at least 2 verified wallets and 1 unverified wallet (verify the unverified wallet's vote silently fails)
-- [ ] Document the verification step in your DAO's onboarding docs (link to `entros.io/verify`)
-- [ ] Decide your `min_trust_score` and `max_verification_age` and document the rationale for members
-- [ ] Decide your stacking pattern (token-voter + Entros, NFT-voter + Entros, etc.) and configure accordingly
-- [ ] Have a fallback plan if the Entros validator service is degraded (members can't verify → can they still vote?)
-- [ ] Brief your member base on what Entros catches and doesn't catch — be honest about the limits
-
----
+- The client package builds against the current program IDL.
+- The Realms UI registration is accepted and verified.
+- One complete devnet vote succeeds through the normal UI.
+- An ineligible Anchor returns a clear pre-transaction error.
+- Chaining tests preserve the predecessor weight.
+- The 100-slot expiry is replaced with a duration-derived policy.
+- Public docs match the deployed cluster and client behavior.
 
 ## Support
 
-- Open an issue at https://github.com/entros-protocol/entros-governance-plugin/issues
-- Reach out via the Entros Protocol Discord (link on entros.io)
-- For threat-model and security questions: see https://entros.io/security
+Open an issue at <https://github.com/entros-protocol/entros-governance-plugin/issues>.
 
----
+Security reports must follow the repository `SECURITY.md` process.
 
 ## License
 
-MIT (consistent with the rest of the Entros Protocol stack).
+MIT.

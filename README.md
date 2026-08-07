@@ -4,33 +4,39 @@ SPL Governance voter weight plugin for [Entros Protocol](https://entros.io).
 
 ## What it is
 
-Optional behavioral gate that layers on top of existing voter weight plugins (token-voter, NFT-voter, quadratic). Catches automated voting bots and gives DAOs a privacy-preserving signal when they don't want to require KYC. One signal in a stack — not a replacement for tokenomics or community moderation.
+This repository contains an on-chain voter-weight addin deployed on Solana devnet. It checks an Entros Anchor's Trust Score and verification recency.
 
-## What it catches and what it doesn't
+Realms client registration, automatic transaction construction, and plugin chaining remain planned work. The current program is not a turnkey Realms UI integration.
 
-**Catches well:** automated voting bots, synthetic-voice attacks, dormant wallets resurrected to vote, wallet-rotation at the bot level.
+## Security boundary
 
-**Catches imperfectly:** coordinated humans intentionally varying voice and motion across wallets. Cross-Anchor comparison is the layer that applies here, and its sensitivity is bounded by how much a person can vary their own behavioral signature. The per-Anchor cadence requirement means any identity that clears a meaningful Trust Score carries weeks of scored history behind it.
+The program does not detect automation or synthetic media. It reads an existing Entros `IdentityState` account and applies configured eligibility rules.
 
-**Does not catch at all:** token-based plutocracy, off-chain coordination / vote buying, compromised wallets where the attacker has both the key and the verified Anchor.
+The private Entros validator decides whether a verification passes. The program trusts the resulting Anchor state and does not reproduce those checks on-chain.
 
-This is why the plugin is positioned as additive. It is strongest stacked with token-voter and community moderation, each layer catching what the others miss. Full integration walkthrough including stacking patterns and configuration tuning: [`docs/REALMS-INTEGRATION-WALKTHROUGH.md`](docs/REALMS-INTEGRATION-WALKTHROUGH.md).
+The addin does not prevent vote buying, wallet compromise, or token concentration. DAOs must combine it with their own governance controls.
+
+See [`docs/REALMS-INTEGRATION-WALKTHROUGH.md`](docs/REALMS-INTEGRATION-WALKTHROUGH.md) for the current program boundary and planned Realms integration.
 
 ## Where it fits
 
-DAOs on [Realms](https://app.realms.today) can configure this plugin so each vote requires the voter to have a recently active Entros Anchor with a Trust Score above a configurable threshold. Designed to chain with token-voter (proves token holdings AND liveness), NFT-voter (proves membership AND liveness), or quadratic voting (caps both whale and bot dominance simultaneously).
+The deployed program can produce binary voter weight for an eligible Entros Anchor. A future Realms client can compose that check into governance transactions.
+
+Future chaining can combine Entros eligibility with another voter-weight source. The current registrar and update instruction do not accept a predecessor plugin record.
 
 ## How it works
 
 1. DAO admin calls `create_registrar` with a minimum Trust Score and maximum verification age
 2. Each voter calls `create_voter_weight_record` to initialize their record
 3. Before voting, the voter calls `update_voter_weight_record` which reads their Entros IdentityState PDA cross-program and checks:
-   - Trust Score >= minimum configured by the DAO (proves sustained behavioral history)
-   - Last verification is recent enough (proves the human is actively engaged)
-4. If both pass, voter_weight is set to 1 with a short expiry (~40 seconds)
-5. The governance program reads the VoterWeightRecord and allows the vote
+   - Trust Score meets the DAO's configured floor
+   - The latest verification timestamp falls inside the DAO's configured window
+4. If both pass, the program sets `voter_weight` to `1` with a 100-slot expiry
+5. A future client can include the record update in a governance transaction
 
-The voter weight expires after ~100 slots, forcing the update to happen in the same transaction as the governance action. This prevents stale weight records from being reused.
+The record expires after 100 slots. Active work will replace that fixed slot count with a duration-derived value.
+
+Ineligible updates return an error. They do not write a zero-weight record.
 
 ## Instructions
 
@@ -54,8 +60,7 @@ Voter wants to cast a vote
     → checks trust_score >= min_trust_score
     → checks verification age < max_verification_age
     → sets voter_weight = 1, expiry = current_slot + 100
-    → governance program reads VoterWeightRecord
-    → vote is accepted
+    → a future Realms client includes the record in a governance action
 ```
 
 The plugin reads the Entros IdentityState account via raw byte deserialization (not Anchor CPI) to avoid version coupling with the Entros Anchor program.
@@ -81,20 +86,25 @@ Requires:
 # Generate test fixtures (one-time)
 npx tsx scripts/generate-test-fixtures.ts
 
+# Create an isolated ledger for this test run
+GOVERNANCE_TEST_LEDGER="$(mktemp -d /tmp/entros-governance.XXXXXX)"
+
 # Start local validator with genesis programs and fixture accounts
 solana-test-validator \
+  --ledger "$GOVERNANCE_TEST_LEDGER" \
   --bpf-program 99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534 target/deploy/entros_voter_weight.so \
   --bpf-program GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2 tests/fixtures/entros_anchor.so \
   --bpf-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw tests/fixtures/spl_governance.so \
   --account 63cKuvoe9WuNH9Ds6aXF7iSc4jHmJc4ZkxdHTaitJ5tr tests/fixtures/identity-state-a.json \
   --account 73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ tests/fixtures/identity-state-b.json \
-  --reset --quiet
+  --account 6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP tests/fixtures/identity-state-c.json \
+  --quiet
 
 # Run all tests (in a separate terminal)
 npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
 ```
 
-38 tests: 20 unit tests (byte layout, PDA derivation, validation logic) + 18 integration tests (real transactions against local validator with Entros Anchor and spl-governance loaded as genesis programs).
+39 tests: 20 unit tests and 19 integration tests.
 
 ## Dependencies
 
@@ -105,16 +115,18 @@ npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
 | spl-governance-addin-api-mythic | 0.1.6 | VoterWeightRecord type |
 | solana-program | 2.2.1 | Solana runtime |
 
-## Realms UI Compatibility
+## Realms integration status
 
-The Realms V2 UI supports custom voter weight plugins. Any DAO admin can configure Entros as their voter weight addin by pasting the program ID (`99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534`) in the "Custom voting program ID" field in the realm settings. No frontend changes required.
+The on-chain addin is deployed on devnet. Normal Realms UI execution also needs a registered JS client that constructs the required transactions.
+
+That client is not present in this repository. Plugin chaining also requires registrar and instruction changes before it can ship.
 
 ## Related
 
-- [Entros Protocol](https://entros.io) -- behavioral proof-of-personhood on Solana
-- [Pulse SDK](https://www.npmjs.com/package/@entros/pulse-sdk) -- client-side verification SDK
-- [Protocol Core](https://github.com/entros-protocol/protocol-core) -- on-chain identity programs
-- [Governance Program Library](https://github.com/Mythic-Project/governance-program-library) -- reference voter weight plugins
+- [Entros Protocol](https://entros.io) - behavioral verification research on Solana
+- [Pulse SDK](https://www.npmjs.com/package/@entros/pulse-sdk) - client-side verification SDK
+- [Protocol Core](https://github.com/entros-protocol/protocol-core) - on-chain identity programs
+- [Governance Program Library](https://github.com/Mythic-Project/governance-program-library) - reference voter-weight plugins
 
 ## License
 
