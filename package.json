@@ -24,6 +24,7 @@
     "@types/mocha": "^10.0.0",
     "@types/node": "24.13.3",
     "chai": "^4.3.0",
+    "fastestsmallesttextencoderdecoder": "1.0.22",
     "mocha": "^11.0.0",
     "ts-mocha": "^10.0.0",
     "tsx": "4.21.0",
