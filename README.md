@@ -72,6 +72,7 @@ The plugin reads the Entros IdentityState account via raw byte deserialization (
 ## Build
 
 ```bash
+anchor build --no-idl -- -- --locked
 anchor build
 ```
 
@@ -79,30 +80,26 @@ Requires:
 - Anchor 0.32.1
 - Solana CLI 2.2.1
 - Rust 1.91.0
+- Node.js 24.15.0
+- npm 11.12.1
 
 ## Test
 
 ```bash
-# Generate test fixtures (one-time)
-npx tsx scripts/generate-test-fixtures.ts
-
-# Create an isolated ledger for this test run
-GOVERNANCE_TEST_LEDGER="$(mktemp -d /tmp/entros-governance.XXXXXX)"
-
-# Start local validator with genesis programs and fixture accounts
-solana-test-validator \
-  --ledger "$GOVERNANCE_TEST_LEDGER" \
-  --bpf-program 99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534 target/deploy/entros_voter_weight.so \
-  --bpf-program GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2 tests/fixtures/entros_anchor.so \
-  --bpf-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw tests/fixtures/spl_governance.so \
-  --account 63cKuvoe9WuNH9Ds6aXF7iSc4jHmJc4ZkxdHTaitJ5tr tests/fixtures/identity-state-a.json \
-  --account 73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ tests/fixtures/identity-state-b.json \
-  --account 6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP tests/fixtures/identity-state-c.json \
-  --quiet
-
-# Run all tests (in a separate terminal)
-npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
+npm ci
+npm run typecheck
+npm run fixtures:verify
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo test --workspace --all-features --locked
+anchor build --no-idl -- -- --locked
+anchor build
+npm run test:localnet
 ```
+
+The localnet command loads the declared programs and account fixtures into an isolated ledger. It refuses occupied test ports and removes its ledger when complete.
+
+Run `npm run fixtures:generate` only when the committed account fixtures need an intentional update. `npm run fixtures:verify` checks their hashes and reproducibility.
 
 39 tests: 20 unit tests and 19 integration tests.
 

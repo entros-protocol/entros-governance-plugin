@@ -56,25 +56,14 @@ This design keeps Entros as an eligibility gate. It does not replace economic or
 Use the repository integration suite to test the deployed account model locally:
 
 ```bash
-npx tsx scripts/generate-test-fixtures.ts
-GOVERNANCE_TEST_LEDGER="$(mktemp -d /tmp/entros-governance.XXXXXX)"
-
-solana-test-validator \
-  --ledger "$GOVERNANCE_TEST_LEDGER" \
-  --bpf-program 99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534 target/deploy/entros_voter_weight.so \
-  --bpf-program GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2 tests/fixtures/entros_anchor.so \
-  --bpf-program GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw tests/fixtures/spl_governance.so \
-  --account 63cKuvoe9WuNH9Ds6aXF7iSc4jHmJc4ZkxdHTaitJ5tr tests/fixtures/identity-state-a.json \
-  --account 73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ tests/fixtures/identity-state-b.json \
-  --account 6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP tests/fixtures/identity-state-c.json \
-  --quiet
+npm ci
+npm run fixtures:verify
+anchor build --no-idl -- -- --locked
+anchor build
+npm run test:localnet
 ```
 
-Run the test suite in another terminal:
-
-```bash
-npx ts-mocha -p ./tsconfig.json -t 120000 tests/**/*.ts
-```
+The localnet command starts the validator, loads the declared fixtures, runs the tests, and stops the validator.
 
 The current suite contains 20 unit tests and 19 integration tests.
 

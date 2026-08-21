@@ -4,16 +4,17 @@
  * Creates three test voter accounts:
  * - VOTER_A: trust_score=200 (passes min_trust_score=100)
  * - VOTER_B: trust_score=50 (fails min_trust_score=100)
- * - VOTER_C: trust_score=200 but a WRONG account discriminator — exercises the
+ * - VOTER_C: trust_score=200 but a wrong account discriminator. This exercises the
  *   discriminator type-confusion guard in update_voter_weight_record (owner + PDA
  *   pass; only the discriminator check rejects).
  *
  * Outputs JSON files that the Anchor test validator loads via [[test.validator.account]].
  *
- * Usage: npx tsx scripts/generate-test-fixtures.ts
+ * Usage: npm run fixtures:generate
+ * Usage with an isolated output: npm run fixtures:generate -- --output-dir <path>
  */
 
-import { Keypair, PublicKey } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import * as fs from "fs";
 import * as path from "path";
 
@@ -52,8 +53,8 @@ const IDENTITY_STATE_DISCRIMINATOR = Buffer.from([
   156, 32, 87, 93, 52, 155, 248, 207,
 ]);
 
-// A deliberately wrong discriminator (stand-in for a different entros-anchor
-// account type) — must be rejected before the raw-offset read.
+// This discriminator represents another account type. The parser must reject it
+// before reading fields at fixed offsets.
 const WRONG_DISCRIMINATOR = Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]);
 
 const IDENTITY_STATE_SIZE = 207;
@@ -116,11 +117,42 @@ function writeFixture(
   fs.writeFileSync(filepath, JSON.stringify(fixture, null, 2));
 }
 
+function writeFundedWalletFixture(
+  filepath: string,
+  pubkey: PublicKey,
+  lamports: number,
+) {
+  const fixture = {
+    pubkey: pubkey.toBase58(),
+    account: {
+      lamports,
+      data: ["", "base64"],
+      owner: SystemProgram.programId.toBase58(),
+      executable: false,
+      rentEpoch: 0,
+      space: 0,
+    },
+  };
+  fs.writeFileSync(filepath, JSON.stringify(fixture, null, 2));
+}
+
 function identityPda(voter: PublicKey): PublicKey {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("identity"), voter.toBuffer()],
     ENTROS_ANCHOR_PROGRAM_ID,
   )[0];
+}
+
+function parseOutputDirectory(args: readonly string[]): string {
+  if (args.length === 0) {
+    return path.resolve(__dirname, "../tests/fixtures");
+  }
+
+  if (args.length !== 2 || args[0] !== "--output-dir" || args[1].length === 0) {
+    throw new Error("Usage: generate-test-fixtures.ts [--output-dir <path>]");
+  }
+
+  return path.resolve(args[1]);
 }
 
 function main() {
@@ -149,12 +181,31 @@ function main() {
     WRONG_DISCRIMINATOR,
   );
 
-  const fixturesDir = path.resolve(__dirname, "../tests/fixtures");
+  const outputArgs = process.argv.slice(2);
+  const fixturesDir = parseOutputDirectory(outputArgs);
+  fs.mkdirSync(fixturesDir, { recursive: true });
   writeFixture(path.join(fixturesDir, "identity-state-a.json"), pdaA, dataA, ENTROS_ANCHOR_PROGRAM_ID);
   writeFixture(path.join(fixturesDir, "identity-state-b.json"), pdaB, dataB, ENTROS_ANCHOR_PROGRAM_ID);
   writeFixture(path.join(fixturesDir, "identity-state-c.json"), pdaC, dataC, ENTROS_ANCHOR_PROGRAM_ID);
+  if (outputArgs.length > 0) {
+    writeFundedWalletFixture(
+      path.join(fixturesDir, "voter-a-wallet.json"),
+      voterA.publicKey,
+      1_000 * 1_000_000_000,
+    );
+    writeFundedWalletFixture(
+      path.join(fixturesDir, "voter-b-wallet.json"),
+      voterB.publicKey,
+      10 * 1_000_000_000,
+    );
+    writeFundedWalletFixture(
+      path.join(fixturesDir, "voter-c-wallet.json"),
+      voterC.publicKey,
+      10 * 1_000_000_000,
+    );
+  }
 
-  console.log("\nFixtures written to tests/fixtures/");
+  console.log(`\nFixtures written to ${fixturesDir}`);
   console.log("\nAdd to Anchor.toml:");
   for (const [pda, file] of [
     [pdaA, "identity-state-a.json"],
