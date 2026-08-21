@@ -13,7 +13,7 @@
  * - Wallet has an Entros IdentityState on devnet (verified via entros.io)
  * - Solana CLI configured for devnet with a funded keypair
  *
- * Usage: npx tsx scripts/test-devnet.ts
+ * Usage: npm run test:devnet
  */
 
 import {

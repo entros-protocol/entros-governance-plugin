@@ -62,7 +62,7 @@ const VOTER_C = Keypair.fromSecretKey(
 );
 
 const connection = new Connection("http://localhost:8899", "confirmed");
-let payer: Keypair;
+const payer = VOTER_A;
 
 // Shared state across happy path tests
 let communityMint: PublicKey;
@@ -83,10 +83,22 @@ const [VOTER_C_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
   ENTROS_ANCHOR_PROGRAM_ID
 );
 
-function expectError(err: any, errorCode: number): void {
+function expectError(err: unknown, errorCode: number): void {
   const hexCode = "0x" + errorCode.toString(16);
-  const msg = err.message || "";
-  const logs = err.logs || err.transactionLogs || [];
+  const record =
+    typeof err === "object" && err !== null
+      ? (err as Record<string, unknown>)
+      : {};
+  const msg =
+    err instanceof Error
+      ? err.message
+      : typeof record.message === "string"
+        ? record.message
+        : "";
+  const rawLogs = record.logs ?? record.transactionLogs;
+  const logs = Array.isArray(rawLogs)
+    ? rawLogs.filter((entry): entry is string => typeof entry === "string")
+    : [];
   const combined = msg + " " + logs.join(" ");
   expect(
     combined.includes(hexCode) || combined.includes(`custom program error: ${hexCode}`),
@@ -118,35 +130,19 @@ async function createMint(payerKp: Keypair): Promise<PublicKey> {
   return mintKeypair.publicKey;
 }
 
+async function fundSigner(recipient: PublicKey): Promise<void> {
+  const tx = new Transaction().add(
+    SystemProgram.transfer({
+      fromPubkey: payer.publicKey,
+      toPubkey: recipient,
+      lamports: LAMPORTS_PER_SOL,
+    })
+  );
+  await sendAndConfirmTransaction(connection, tx, [payer]);
+}
+
 describe("entros-voter-weight integration", () => {
   before(async () => {
-    payer = Keypair.generate();
-
-    // Airdrop to payer and voters
-    const sig1 = await connection.requestAirdrop(
-      payer.publicKey,
-      10 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(sig1);
-
-    const sig2 = await connection.requestAirdrop(
-      VOTER_A.publicKey,
-      2 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(sig2);
-
-    const sig3 = await connection.requestAirdrop(
-      VOTER_B.publicKey,
-      2 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(sig3);
-
-    const sig4 = await connection.requestAirdrop(
-      VOTER_C.publicKey,
-      2 * LAMPORTS_PER_SOL
-    );
-    await connection.confirmTransaction(sig4);
-
     // Verify fixture accounts are loaded
     const identityA = await connection.getAccountInfo(VOTER_A_IDENTITY_PDA);
     expect(identityA, "VOTER_A IdentityState fixture not loaded").to.not.be
@@ -242,7 +238,7 @@ describe("entros-voter-weight integration", () => {
       const tx = new Transaction().add(result.instruction);
       // VOTER_A must sign because the new `governing_token_owner_signer`
       // constraint binds the VWR creation to the wallet it represents.
-      await sendAndConfirmTransaction(connection, tx, [payer, VOTER_A]);
+      await sendAndConfirmTransaction(connection, tx, [payer]);
 
       const account = await connection.getAccountInfo(vwrPda);
       expect(account).to.not.be.null;
@@ -331,11 +327,7 @@ describe("entros-voter-weight integration", () => {
 
     it("rejects wrong realm authority", async () => {
       const wrongAuthority = Keypair.generate();
-      const sig = await connection.requestAirdrop(
-        wrongAuthority.publicKey,
-        LAMPORTS_PER_SOL
-      );
-      await connection.confirmTransaction(sig);
+      await fundSigner(wrongAuthority.publicKey);
 
       const result = buildCreateRegistrarInstruction(
         failRealmPda,
@@ -350,7 +342,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [wrongAuthority]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6000); // InvalidRealmAuthority
       }
     });
@@ -399,7 +391,7 @@ describe("entros-voter-weight integration", () => {
       );
       failVwrA = vwrA.vwrPda;
       const vwrATx = new Transaction().add(vwrA.instruction);
-      await sendAndConfirmTransaction(connection, vwrATx, [payer, VOTER_A]);
+      await sendAndConfirmTransaction(connection, vwrATx, [payer]);
 
       const vwrB = buildCreateVoterWeightRecordInstruction(
         failRegistrarPda,
@@ -443,7 +435,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_A]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6001); // MissingIdentityAccount
       }
     });
@@ -461,7 +453,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_A]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6002); // InvalidIdentityPda
       }
     });
@@ -479,7 +471,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_A]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6003); // InvalidIdentityOwner
       }
     });
@@ -499,7 +491,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_C]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6004); // InvalidIdentityData (discriminator mismatch)
       }
     });
@@ -517,7 +509,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_B]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6005); // InsufficientTrustScore
       }
     });
@@ -555,7 +547,7 @@ describe("entros-voter-weight integration", () => {
         payer.publicKey
       );
       const expVwrTx = new Transaction().add(expVwr.instruction);
-      await sendAndConfirmTransaction(connection, expVwrTx, [payer, VOTER_A]);
+      await sendAndConfirmTransaction(connection, expVwrTx, [payer]);
 
       const ix = buildUpdateVoterWeightRecordInstruction(
         expRegistrar.registrarPda,
@@ -568,7 +560,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_A]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6006); // VerificationExpired
       }
     });
@@ -614,7 +606,7 @@ describe("entros-voter-weight integration", () => {
       );
       closeVwrPda = vwr.vwrPda;
       const vwrTx = new Transaction().add(vwr.instruction);
-      await sendAndConfirmTransaction(connection, vwrTx, [payer, VOTER_A]);
+      await sendAndConfirmTransaction(connection, vwrTx, [payer]);
     });
 
     it("rejects close with wrong voter authority", async () => {
@@ -629,7 +621,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [VOTER_B]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6009); // VoterWeightRecordOwnerMismatch
       }
     });
@@ -668,11 +660,7 @@ describe("entros-voter-weight integration", () => {
 
     it("rejects update with wrong authority", async () => {
       const wrongAuth = Keypair.generate();
-      const sig = await connection.requestAirdrop(
-        wrongAuth.publicKey,
-        LAMPORTS_PER_SOL
-      );
-      await connection.confirmTransaction(sig);
+      await fundSigner(wrongAuth.publicKey);
 
       const ix = buildUpdateRegistrarInstruction(
         updRegistrarPda,
@@ -686,7 +674,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [wrongAuth]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6000); // InvalidRealmAuthority
       }
     });
@@ -725,11 +713,7 @@ describe("entros-voter-weight integration", () => {
 
     it("rejects close with wrong authority", async () => {
       const wrongAuth = Keypair.generate();
-      const sig = await connection.requestAirdrop(
-        wrongAuth.publicKey,
-        LAMPORTS_PER_SOL
-      );
-      await connection.confirmTransaction(sig);
+      await fundSigner(wrongAuth.publicKey);
 
       const ix = buildCloseRegistrarInstruction(
         closeRegRegistrarPda,
@@ -742,7 +726,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [wrongAuth]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6000); // InvalidRealmAuthority
       }
     });
@@ -832,11 +816,7 @@ describe("entros-voter-weight integration", () => {
 
     it("rejects update with wrong authority", async () => {
       const wrongAuth = Keypair.generate();
-      const sig = await connection.requestAirdrop(
-        wrongAuth.publicKey,
-        LAMPORTS_PER_SOL
-      );
-      await connection.confirmTransaction(sig);
+      await fundSigner(wrongAuth.publicKey);
 
       const ix = buildUpdateMaxVoterWeightRecordInstruction(
         mvwrRegistrarPda,
@@ -850,7 +830,7 @@ describe("entros-voter-weight integration", () => {
       try {
         await sendAndConfirmTransaction(connection, tx, [wrongAuth]);
         expect.fail("Should have failed");
-      } catch (err: any) {
+      } catch (err) {
         expectError(err, 6000); // InvalidRealmAuthority
       }
     });

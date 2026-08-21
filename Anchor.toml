@@ -19,7 +19,7 @@ cluster = "Localnet"
 wallet = "../.config/devnet-authority.json"
 
 [scripts]
-test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "npm test"
 
 [[test.genesis]]
 address = "GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2"

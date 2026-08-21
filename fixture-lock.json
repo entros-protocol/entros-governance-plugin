@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "files": {
+    "tests/fixtures/entros_anchor.so": "d3a54852c619847daeec3336152a998999bb55d3aa50ba148ab097b0becb9c61",
+    "tests/fixtures/spl_governance.so": "1059f12b6eee25487e6e0e93e44b98487242912d1dbe7ddb3640e0215e0d3395",
+    "tests/fixtures/identity-state-a.json": "100307843f2635ce9f1a9b418bb077efb7576469c2b3b679b7f47e660c580c85",
+    "tests/fixtures/identity-state-b.json": "a72ea81d8b57f2c6f496aa811ef529dff20f761854934d42d860905840e54728",
+    "tests/fixtures/identity-state-c.json": "a7f3d5fecc0b2636adbcbbd147d3495fc3fee274fe789dfc8997a282d720013e"
+  }
+}
