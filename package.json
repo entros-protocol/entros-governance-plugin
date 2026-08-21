@@ -22,7 +22,7 @@
   "devDependencies": {
     "@types/chai": "^4.3.0",
     "@types/mocha": "^10.0.0",
-    "@types/node": "24.13.3",
+    "@types/node": "26.2.0",
     "chai": "^4.3.0",
     "fastestsmallesttextencoderdecoder": "1.0.22",
     "mocha": "^11.0.0",
