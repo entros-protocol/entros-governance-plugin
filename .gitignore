@@ -5,3 +5,10 @@ target
 node_modules
 test-ledger
 .yarn
+
+# Keypairs and secrets. Never commit these.
+*.key
+*-keypair.json
+.keypair-backup-*/
+.env
+.env.*
