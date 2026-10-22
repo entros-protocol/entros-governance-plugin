@@ -6,7 +6,7 @@ macro_rules! vote_weight_record {
     ($id:expr) => {
         #[derive(Clone)]
         pub struct VoterWeightRecord(
-            spl_governance_addin_api::voter_weight::VoterWeightRecord,
+            pub(crate) spl_governance_addin_api::voter_weight::VoterWeightRecord,
         );
 
         impl VoterWeightRecord {

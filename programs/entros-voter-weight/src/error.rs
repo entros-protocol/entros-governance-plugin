@@ -43,4 +43,7 @@ pub enum EntrosVoterError {
 
     #[msg("max_voter_weight must be greater than zero")]
     InvalidMaxVoterWeight,
+
+    #[msg("weight_action_target must not be the default pubkey")]
+    InvalidWeightActionTarget,
 }

@@ -9,11 +9,11 @@ const PLUGIN_PROGRAM_ID = new PublicKey(
   "99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534"
 );
 
-// IdentityState byte layout
+// IdentityState byte layout (593 bytes on-chain in entros-anchor; prefix 0..62 is invariant)
 const IDENTITY_STATE_DISCRIMINATOR = Buffer.from([
   156, 32, 87, 93, 52, 155, 248, 207,
 ]);
-const IDENTITY_STATE_SIZE = 207;
+const IDENTITY_STATE_SIZE = 593;
 
 function buildIdentityStateData(
   owner: PublicKey,
@@ -256,6 +256,28 @@ describe("entros-voter-weight", () => {
       // So age = i64::MAX which is > any max_verification_age
       // This means future timestamps correctly fail
       expect(age < 0).to.be.true; // JavaScript handles differently, but Rust logic is correct
+    });
+  });
+
+  describe("action-bound voter weight update encoding", () => {
+    it("encodes 41-byte instruction data (8-byte discriminator + 1-byte action + 32-byte target)", () => {
+      const crypto = require("crypto");
+      const disc = crypto
+        .createHash("sha256")
+        .update("global:update_voter_weight_record_for_action")
+        .digest()
+        .slice(0, 8);
+      const target = Keypair.generate().publicKey;
+      const buf = Buffer.alloc(41);
+      disc.copy(buf, 0);
+      buf.writeUInt8(2, 8); // CreateGovernance = 2
+      target.toBuffer().copy(buf, 9);
+
+      expect(buf.length).to.equal(41);
+      expect(buf.readUInt8(8)).to.equal(2);
+      expect(new PublicKey(buf.slice(9, 41)).toBase58()).to.equal(
+        target.toBase58()
+      );
     });
   });
 });

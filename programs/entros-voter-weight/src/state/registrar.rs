@@ -26,3 +26,42 @@ impl Registrar {
         + 64; // reserved
               // Total: 178 bytes
 }
+
+/// Governance action that an action-bound voter-weight update authorizes.
+/// Mirrors `spl_governance_addin_api::voter_weight::VoterWeightAction` with
+/// Anchor serialization and IDL support.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VoterWeightAction {
+    /// Cast vote for a proposal. Target: Proposal
+    CastVote,
+    /// Comment on a proposal. Target: Proposal
+    CommentProposal,
+    /// Create Governance within a realm. Target: Realm
+    CreateGovernance,
+    /// Create a proposal for a governance. Target: Governance
+    CreateProposal,
+    /// Sign off on a proposal for a governance. Target: Proposal
+    SignOffProposal,
+}
+
+impl From<VoterWeightAction> for spl_governance_addin_api::voter_weight::VoterWeightAction {
+    fn from(action: VoterWeightAction) -> Self {
+        match action {
+            VoterWeightAction::CastVote => {
+                spl_governance_addin_api::voter_weight::VoterWeightAction::CastVote
+            }
+            VoterWeightAction::CommentProposal => {
+                spl_governance_addin_api::voter_weight::VoterWeightAction::CommentProposal
+            }
+            VoterWeightAction::CreateGovernance => {
+                spl_governance_addin_api::voter_weight::VoterWeightAction::CreateGovernance
+            }
+            VoterWeightAction::CreateProposal => {
+                spl_governance_addin_api::voter_weight::VoterWeightAction::CreateProposal
+            }
+            VoterWeightAction::SignOffProposal => {
+                spl_governance_addin_api::voter_weight::VoterWeightAction::SignOffProposal
+            }
+        }
+    }
+}

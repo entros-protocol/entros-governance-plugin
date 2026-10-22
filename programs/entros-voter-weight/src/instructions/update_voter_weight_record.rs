@@ -21,6 +21,9 @@ const IDENTITY_MIN_DATA_LEN: usize = 62;
 /// be reinterpreted as IdentityState.
 const IDENTITY_DISCRIMINATOR: [u8; 8] = [156, 32, 87, 93, 52, 155, 248, 207];
 
+/// Slot window (~4 seconds at 400ms/slot) for general `update_voter_weight_record`.
+pub const VOTER_WEIGHT_EXPIRY_SLOT_WINDOW: u64 = 10;
+
 #[derive(Accounts)]
 pub struct UpdateVoterWeightRecord<'info> {
     #[account(
@@ -43,21 +46,19 @@ pub struct UpdateVoterWeightRecord<'info> {
     // remaining_accounts[0] = Entros IdentityState PDA (read-only)
 }
 
-pub fn update_voter_weight_record<'info>(
-    ctx: Context<'_, '_, 'info, 'info, UpdateVoterWeightRecord<'info>>,
-) -> Result<()> {
-    let registrar = &ctx.accounts.registrar;
-    let voter_weight_record = &mut ctx.accounts.voter_weight_record;
-    let voter = ctx.accounts.voter_authority.key();
-
+fn verify_voter_identity_and_recency<'info>(
+    registrar: &Registrar,
+    voter_weight_record: &VoterWeightRecord,
+    voter: Pubkey,
+    remaining_accounts: &[AccountInfo<'info>],
+) -> Result<Clock> {
     require!(
         voter_weight_record.governing_token_owner == voter,
         EntrosVoterError::VoterWeightRecordOwnerMismatch
     );
 
     // 1. Get IdentityState account from remaining_accounts
-    let identity_info = ctx
-        .remaining_accounts
+    let identity_info = remaining_accounts
         .first()
         .ok_or(error!(EntrosVoterError::MissingIdentityAccount))?;
 
@@ -113,7 +114,7 @@ pub fn update_voter_weight_record<'info>(
         EntrosVoterError::InsufficientTrustScore
     );
 
-    // 8. Check verification recency
+    // 8. Check verification recency (Unix seconds)
     let clock = Clock::get()?;
     let age = clock
         .unix_timestamp
@@ -124,15 +125,161 @@ pub fn update_voter_weight_record<'info>(
         EntrosVoterError::VerificationExpired
     );
 
+    Ok(clock)
+}
+
+pub fn update_voter_weight_record<'info>(
+    ctx: Context<'_, '_, 'info, 'info, UpdateVoterWeightRecord<'info>>,
+) -> Result<()> {
+    let clock = verify_voter_identity_and_recency(
+        &ctx.accounts.registrar,
+        &ctx.accounts.voter_weight_record,
+        ctx.accounts.voter_authority.key(),
+        ctx.remaining_accounts,
+    )?;
+
+    let voter_weight_record = &mut ctx.accounts.voter_weight_record;
+
     // 9. One person, one vote
     voter_weight_record.voter_weight = 1;
 
-    // 10. Expire after ~40 seconds (100 slots). Forces update in same tx as governance action.
-    voter_weight_record.voter_weight_expiry = Some(clock.slot.saturating_add(100));
+    // 10. Expire after ~4 seconds (10 slots). Tightened slot window for standalone updates.
+    voter_weight_record.voter_weight_expiry =
+        Some(clock.slot.saturating_add(VOTER_WEIGHT_EXPIRY_SLOT_WINDOW));
 
-    // 11. Weight applies to any governance action
+    // 11. Weight applies to any governance action within the 10-slot window
     voter_weight_record.weight_action = None;
     voter_weight_record.weight_action_target = None;
 
     Ok(())
+}
+
+pub fn update_voter_weight_record_for_action<'info>(
+    ctx: Context<'_, '_, 'info, 'info, UpdateVoterWeightRecord<'info>>,
+    weight_action: VoterWeightAction,
+    weight_action_target: Pubkey,
+) -> Result<()> {
+    require!(
+        weight_action_target != Pubkey::default(),
+        EntrosVoterError::InvalidWeightActionTarget
+    );
+
+    let clock = verify_voter_identity_and_recency(
+        &ctx.accounts.registrar,
+        &ctx.accounts.voter_weight_record,
+        ctx.accounts.voter_authority.key(),
+        ctx.remaining_accounts,
+    )?;
+
+    let voter_weight_record = &mut ctx.accounts.voter_weight_record;
+
+    // 9. One person, one vote
+    voter_weight_record.voter_weight = 1;
+
+    // 10. Current-slot expiry: requires consumption in the same slot / atomic transaction.
+    voter_weight_record.voter_weight_expiry = Some(clock.slot);
+
+    // 11. Bind weight to the exact governance action and target account.
+    voter_weight_record.weight_action = Some(weight_action.into());
+    voter_weight_record.weight_action_target = Some(weight_action_target);
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spl_governance_addin_api::voter_weight::{
+        VoterWeightAction as AddinAction, VoterWeightRecord as AddinRecord,
+    };
+
+    #[test]
+    fn voter_weight_expiry_slot_window_is_ten_slots() {
+        assert_eq!(VOTER_WEIGHT_EXPIRY_SLOT_WINDOW, 10);
+    }
+
+    #[test]
+    fn voter_weight_action_maps_and_serializes_identically_to_addin_api() {
+        let pairs = [
+            (VoterWeightAction::CastVote, AddinAction::CastVote, 0u8),
+            (
+                VoterWeightAction::CommentProposal,
+                AddinAction::CommentProposal,
+                1u8,
+            ),
+            (
+                VoterWeightAction::CreateGovernance,
+                AddinAction::CreateGovernance,
+                2u8,
+            ),
+            (
+                VoterWeightAction::CreateProposal,
+                AddinAction::CreateProposal,
+                3u8,
+            ),
+            (
+                VoterWeightAction::SignOffProposal,
+                AddinAction::SignOffProposal,
+                4u8,
+            ),
+        ];
+
+        for (plugin_action, expected_addin_action, expected_byte) in pairs {
+            let converted: AddinAction = plugin_action.into();
+            assert_eq!(converted, expected_addin_action);
+
+            let mut plugin_bytes = Vec::new();
+            AnchorSerialize::serialize(&plugin_action, &mut plugin_bytes).unwrap();
+            assert_eq!(plugin_bytes, vec![expected_byte]);
+        }
+    }
+
+    #[test]
+    fn action_bound_voter_weight_record_round_trips_at_fixed_offsets() {
+        let realm = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let target = Pubkey::new_unique();
+        let current_slot = 42_000u64;
+
+        let record = VoterWeightRecord(AddinRecord {
+            account_discriminator: AddinRecord::ACCOUNT_DISCRIMINATOR,
+            realm,
+            governing_token_mint: mint,
+            governing_token_owner: owner,
+            voter_weight: 1,
+            voter_weight_expiry: Some(current_slot),
+            weight_action: Some(VoterWeightAction::CastVote.into()),
+            weight_action_target: Some(target),
+            reserved: [0u8; 8],
+        });
+
+        let mut bytes = Vec::with_capacity(VoterWeightRecord::get_space());
+        anchor_lang::AccountSerialize::try_serialize(&record, &mut bytes).unwrap();
+        assert_eq!(bytes.len(), VoterWeightRecord::get_space());
+
+        // Offset 112: Some(current_slot)
+        assert_eq!(bytes[112], 1);
+        assert_eq!(
+            u64::from_le_bytes(bytes[113..121].try_into().unwrap()),
+            current_slot
+        );
+        // Offset 121: Some(VoterWeightAction::CastVote == 0)
+        assert_eq!(bytes[121], 1);
+        assert_eq!(bytes[122], 0);
+        // Offset 123: Some(target)
+        assert_eq!(bytes[123], 1);
+        assert_eq!(&bytes[124..156], target.as_ref());
+
+        let mut slice = bytes.as_slice();
+        let decoded =
+            <VoterWeightRecord as anchor_lang::AccountDeserialize>::try_deserialize_unchecked(
+                &mut slice,
+            )
+            .unwrap();
+        assert_eq!(decoded.voter_weight, 1);
+        assert_eq!(decoded.voter_weight_expiry, Some(current_slot));
+        assert_eq!(decoded.weight_action, Some(AddinAction::CastVote));
+        assert_eq!(decoded.weight_action_target, Some(target));
+    }
 }

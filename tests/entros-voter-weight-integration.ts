@@ -23,6 +23,10 @@ import {
   buildUpdateRegistrarInstruction,
   buildCreateVoterWeightRecordInstruction,
   buildUpdateVoterWeightRecordInstruction,
+  buildUpdateVoterWeightRecordForActionInstruction,
+  buildCreateTokenOwnerRecordInstruction,
+  buildCreateGovernanceInstruction,
+  VoterWeightActionTag,
   buildCloseVoterWeightRecordInstruction,
   buildCloseRegistrarInstruction,
   buildCreateMaxVoterWeightRecordInstruction,
@@ -254,7 +258,8 @@ describe("entros-voter-weight integration", () => {
       expect(expiryValue).to.equal(0n); // expired
     });
 
-    it("updates voter weight record -> voter_weight=1", async () => {
+    it("updates voter weight record -> voter_weight=1 with 10-slot expiry", async () => {
+      const preSlot = BigInt(await connection.getSlot("confirmed"));
       const ix = buildUpdateVoterWeightRecordInstruction(
         registrarPda,
         vwrPda,
@@ -264,6 +269,7 @@ describe("entros-voter-weight integration", () => {
 
       const tx = new Transaction().add(ix);
       await sendAndConfirmTransaction(connection, tx, [VOTER_A]);
+      const postSlot = BigInt(await connection.getSlot("confirmed"));
 
       const account = await connection.getAccountInfo(vwrPda);
       const voterWeight = account!.data.readBigUInt64LE(104);
@@ -272,7 +278,13 @@ describe("entros-voter-weight integration", () => {
       const expiryTag = account!.data.readUInt8(112);
       expect(expiryTag).to.equal(1);
       const expiryValue = account!.data.readBigUInt64LE(113);
-      expect(expiryValue > 0n).to.be.true;
+      // Expiry is clock.slot + 10
+      expect(expiryValue >= preSlot + 10n).to.be.true;
+      expect(expiryValue <= postSlot + 10n).to.be.true;
+
+      // weight_action (offset 121) and weight_action_target (offset 122) are None (0)
+      expect(account!.data.readUInt8(121)).to.equal(0);
+      expect(account!.data.readUInt8(122)).to.equal(0);
     });
 
     it("closes voter weight record", async () => {
@@ -832,6 +844,374 @@ describe("entros-voter-weight integration", () => {
         expect.fail("Should have failed");
       } catch (err) {
         expectError(err, 6000); // InvalidRealmAuthority
+      }
+    });
+  });
+
+  describe("action-bound voter weight and spl-governance consumer checks", () => {
+    let govRealmAuthority: Keypair;
+    let govMint: PublicKey;
+    let govRealmPda: PublicKey;
+    let govRegistrarPda: PublicKey;
+    let govVwrA: PublicKey;
+    let govTokenOwnerRecordA: PublicKey;
+
+    async function waitForSlotAfter(targetSlot: bigint): Promise<void> {
+      for (let attempt = 0; attempt < 60; attempt++) {
+        const current = BigInt(await connection.getSlot("confirmed"));
+        if (current > targetSlot) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      throw new Error(`Timed out waiting for slot > ${targetSlot.toString()}`);
+    }
+
+    before(async () => {
+      // Use a distinct realm authority so VOTER_A must authenticate through
+      // TokenOwnerRecord + VoterWeightRecord when calling CreateGovernance.
+      govRealmAuthority = Keypair.generate();
+      await fundSigner(govRealmAuthority.publicKey);
+
+      govMint = await createMint(payer);
+      const realmName = `Gov-Consumer-${Date.now().toString(36)}`;
+      const realm = buildCreateRealmInstruction(
+        realmName,
+        govRealmAuthority.publicKey,
+        govMint,
+        payer.publicKey,
+        PLUGIN_PROGRAM_ID
+      );
+      govRealmPda = realm.realmPda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(realm.instruction),
+        [payer]
+      );
+
+      const registrar = buildCreateRegistrarInstruction(
+        govRealmPda,
+        govMint,
+        govRealmAuthority.publicKey,
+        payer.publicKey,
+        100,
+        2000000000n
+      );
+      govRegistrarPda = registrar.registrarPda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(registrar.instruction),
+        [payer, govRealmAuthority]
+      );
+
+      const vwr = buildCreateVoterWeightRecordInstruction(
+        govRegistrarPda,
+        govRealmPda,
+        govMint,
+        VOTER_A.publicKey,
+        payer.publicKey
+      );
+      govVwrA = vwr.vwrPda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(vwr.instruction),
+        [payer]
+      );
+
+      const tor = buildCreateTokenOwnerRecordInstruction(
+        govRealmPda,
+        VOTER_A.publicKey,
+        govMint,
+        payer.publicKey
+      );
+      govTokenOwnerRecordA = tor.tokenOwnerRecordPda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(tor.instruction),
+        [payer]
+      );
+    });
+
+    it("rejects CreateGovernance when VWR is born expired (stale record)", async () => {
+      const governed = Keypair.generate().publicKey;
+      const createGov = buildCreateGovernanceInstruction(
+        govRealmPda,
+        governed,
+        govTokenOwnerRecordA,
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        govVwrA
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(createGov.instruction),
+          [VOTER_A]
+        );
+        expect.fail("Should have failed with VoterWeightRecordExpired");
+      } catch (err) {
+        expectError(err, 577); // GovernanceError::VoterWeightRecordExpired (0x241)
+      }
+    });
+
+    it("rejects action-bound update with default/zero target pubkey", async () => {
+      const ix = buildUpdateVoterWeightRecordForActionInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CreateGovernance,
+        PublicKey.default
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(ix),
+          [VOTER_A]
+        );
+        expect.fail("Should have failed with InvalidWeightActionTarget");
+      } catch (err) {
+        expectError(err, 6014); // EntrosVoterError::InvalidWeightActionTarget
+      }
+    });
+
+    it("rejects CreateGovernance when VWR is bound to the wrong action", async () => {
+      const governed = Keypair.generate().publicKey;
+      const updateIx = buildUpdateVoterWeightRecordForActionInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CastVote, // wrong action for CreateGovernance
+        govRealmPda
+      );
+      const createGov = buildCreateGovernanceInstruction(
+        govRealmPda,
+        governed,
+        govTokenOwnerRecordA,
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        govVwrA
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(updateIx, createGov.instruction),
+          [VOTER_A]
+        );
+        expect.fail("Should have failed with VoterWeightRecordInvalidAction");
+      } catch (err) {
+        expectError(err, 587); // GovernanceError::VoterWeightRecordInvalidAction (0x24b)
+      }
+    });
+
+    it("rejects CreateGovernance when VWR is bound to the wrong action target", async () => {
+      const governed = Keypair.generate().publicKey;
+      const wrongTarget = Keypair.generate().publicKey;
+      const updateIx = buildUpdateVoterWeightRecordForActionInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CreateGovernance,
+        wrongTarget // CreateGovernance expects realmPda as target
+      );
+      const createGov = buildCreateGovernanceInstruction(
+        govRealmPda,
+        governed,
+        govTokenOwnerRecordA,
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        govVwrA
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(updateIx, createGov.instruction),
+          [VOTER_A]
+        );
+        expect.fail(
+          "Should have failed with VoterWeightRecordInvalidActionTarget"
+        );
+      } catch (err) {
+        expectError(err, 588); // GovernanceError::VoterWeightRecordInvalidActionTarget (0x24c)
+      }
+    });
+
+    it("rejects delayed settlement across slots when using action-bound current-slot expiry", async () => {
+      const updateIx = buildUpdateVoterWeightRecordForActionInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CreateGovernance,
+        govRealmPda
+      );
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(updateIx),
+        [VOTER_A]
+      );
+
+      const vwrAccount = await connection.getAccountInfo(govVwrA);
+      const expirySlot = vwrAccount!.data.readBigUInt64LE(113);
+      // Action-bound expiry is exact clock.slot; wait for the next slot
+      await waitForSlotAfter(expirySlot);
+
+      const governed = Keypair.generate().publicKey;
+      const createGov = buildCreateGovernanceInstruction(
+        govRealmPda,
+        governed,
+        govTokenOwnerRecordA,
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        govVwrA
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(createGov.instruction),
+          [VOTER_A]
+        );
+        expect.fail("Should have failed with VoterWeightRecordExpired");
+      } catch (err) {
+        expectError(err, 577); // GovernanceError::VoterWeightRecordExpired (0x241)
+      }
+    });
+
+    it("succeeds on atomic retry with matching action and target in the same transaction", async () => {
+      const governed = Keypair.generate().publicKey;
+      const updateIx = buildUpdateVoterWeightRecordForActionInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CreateGovernance,
+        govRealmPda
+      );
+      const createGov = buildCreateGovernanceInstruction(
+        govRealmPda,
+        governed,
+        govTokenOwnerRecordA,
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        govVwrA
+      );
+
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(updateIx, createGov.instruction),
+        [VOTER_A]
+      );
+
+      const govAccount = await connection.getAccountInfo(
+        createGov.governancePda
+      );
+      expect(govAccount).to.not.be.null;
+
+      const vwrAccount = await connection.getAccountInfo(govVwrA);
+      // Some(VoterWeightAction::CreateGovernance == 2) at offsets 121..123
+      expect(vwrAccount!.data.readUInt8(121)).to.equal(1);
+      expect(vwrAccount!.data.readUInt8(122)).to.equal(
+        VoterWeightActionTag.CreateGovernance
+      );
+      // Some(govRealmPda) at offsets 123..156
+      expect(vwrAccount!.data.readUInt8(123)).to.equal(1);
+      expect(
+        new PublicKey(vwrAccount!.data.slice(124, 156)).toBase58()
+      ).to.equal(govRealmPda.toBase58());
+    });
+
+    it("expires standalone 10-slot update after 10 slots", async () => {
+      const updateIx = buildUpdateVoterWeightRecordInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA
+      );
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(updateIx),
+        [VOTER_A]
+      );
+
+      const vwrAccount = await connection.getAccountInfo(govVwrA);
+      const expirySlot = vwrAccount!.data.readBigUInt64LE(113);
+      await waitForSlotAfter(expirySlot);
+
+      const governed = Keypair.generate().publicKey;
+      const createGov = buildCreateGovernanceInstruction(
+        govRealmPda,
+        governed,
+        govTokenOwnerRecordA,
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        govVwrA
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(createGov.instruction),
+          [VOTER_A]
+        );
+        expect.fail("Should have failed with VoterWeightRecordExpired");
+      } catch (err) {
+        expectError(err, 577); // GovernanceError::VoterWeightRecordExpired (0x241)
+      }
+    });
+
+    it("rejects action-bound update when IdentityState verification evidence is stale", async () => {
+      // Tighten max_verification_age to 1 second so the 2023 fixture is stale
+      const tightenIx = buildUpdateRegistrarInstruction(
+        govRegistrarPda,
+        govRealmPda,
+        govRealmAuthority.publicKey,
+        100,
+        1n
+      );
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(tightenIx),
+        [govRealmAuthority]
+      );
+
+      const updateIx = buildUpdateVoterWeightRecordForActionInstruction(
+        govRegistrarPda,
+        govVwrA,
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CreateGovernance,
+        govRealmPda
+      );
+
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(updateIx),
+          [VOTER_A]
+        );
+        expect.fail("Should have failed with VerificationExpired");
+      } catch (err) {
+        expectError(err, 6006); // EntrosVoterError::VerificationExpired
+      } finally {
+        const restoreIx = buildUpdateRegistrarInstruction(
+          govRegistrarPda,
+          govRealmPda,
+          govRealmAuthority.publicKey,
+          100,
+          2000000000n
+        );
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(restoreIx),
+          [govRealmAuthority]
+        );
       }
     });
   });

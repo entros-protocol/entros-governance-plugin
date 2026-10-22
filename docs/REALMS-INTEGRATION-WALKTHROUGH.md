@@ -10,7 +10,7 @@ A voter creates a `VoterWeightRecord` for their wallet. Before a governance acti
 
 The update reads the wallet's Entros `IdentityState` account. It checks the account owner, discriminator, wallet binding, Trust Score, and verification recency.
 
-An eligible update writes binary voter weight `1` with a 100-slot expiry. An ineligible update returns an error and writes no zero-weight record.
+An eligible standalone `update_voter_weight_record` writes binary voter weight `1` with a 10-slot expiry. An eligible action-bound `update_voter_weight_record_for_action` writes voter weight `1` with a current-slot expiry (`Some(clock.slot)`) and binds `weight_action` and `weight_action_target` for same-transaction settlement. An ineligible update returns an error and writes no zero-weight record.
 
 The program does not run behavioral checks. It trusts the Anchor state produced by the wider Entros verification flow.
 
@@ -36,7 +36,7 @@ The planned Realms client will:
 
 1. Derive the registrar and voter-weight record addresses.
 2. Create missing voter-weight records.
-3. Add `update_voter_weight_record` before the governance action.
+3. Add `update_voter_weight_record_for_action` (or `update_voter_weight_record`) before the governance action.
 4. Surface eligibility errors before wallet approval.
 5. Derive its cluster from the active connection.
 6. Register with the supported Realms UI plugin interface.
@@ -65,7 +65,7 @@ npm run test:localnet
 
 The localnet command starts the validator, loads the declared fixtures, runs the tests, and stops the validator.
 
-The current suite contains 20 unit tests and 19 integration tests.
+The current suite contains 21 unit tests and 27 integration tests.
 
 ## DAO policy choices
 
@@ -84,7 +84,7 @@ Do not describe the addin as supported by the normal Realms UI until all items b
 - One complete devnet vote succeeds through the normal UI.
 - An ineligible Anchor returns a clear pre-transaction error.
 - Chaining tests preserve the predecessor weight.
-- The 100-slot expiry is replaced with a duration-derived policy.
+- The Realms client prepends `update_voter_weight_record_for_action` in the same transaction as the governance action.
 - Public docs match the deployed cluster and client behavior.
 
 ## Support

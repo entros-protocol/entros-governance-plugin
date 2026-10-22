@@ -249,6 +249,154 @@ export function buildUpdateVoterWeightRecordInstruction(
   });
 }
 
+export enum VoterWeightActionTag {
+  CastVote = 0,
+  CommentProposal = 1,
+  CreateGovernance = 2,
+  CreateProposal = 3,
+  SignOffProposal = 4,
+}
+
+export function buildUpdateVoterWeightRecordForActionInstruction(
+  registrarPda: PublicKey,
+  vwrPda: PublicKey,
+  voterKey: PublicKey,
+  identityPda: PublicKey,
+  weightAction: VoterWeightActionTag,
+  weightActionTarget: PublicKey
+): TransactionInstruction {
+  const disc = anchorDiscriminator("update_voter_weight_record_for_action");
+  const data = Buffer.alloc(8 + 1 + 32);
+  disc.copy(data, 0);
+  data.writeUInt8(weightAction, 8);
+  weightActionTarget.toBuffer().copy(data, 9);
+
+  return new TransactionInstruction({
+    programId: PLUGIN_PROGRAM_ID,
+    keys: [
+      { pubkey: registrarPda, isSigner: false, isWritable: false },
+      { pubkey: vwrPda, isSigner: false, isWritable: true },
+      { pubkey: voterKey, isSigner: true, isWritable: false },
+      { pubkey: identityPda, isSigner: false, isWritable: false },
+    ],
+    data,
+  });
+}
+
+// ---- spl-governance CreateTokenOwnerRecord & CreateGovernance ----
+
+export function buildCreateTokenOwnerRecordInstruction(
+  realmPda: PublicKey,
+  governingTokenOwner: PublicKey,
+  governingTokenMint: PublicKey,
+  payerKey: PublicKey
+): { instruction: TransactionInstruction; tokenOwnerRecordPda: PublicKey } {
+  const [tokenOwnerRecordPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("governance"),
+      realmPda.toBuffer(),
+      governingTokenMint.toBuffer(),
+      governingTokenOwner.toBuffer(),
+    ],
+    GOVERNANCE_PROGRAM_ID
+  );
+
+  // GovernanceInstruction::CreateTokenOwnerRecord = 23
+  const data = Buffer.from([23]);
+
+  return {
+    instruction: new TransactionInstruction({
+      programId: GOVERNANCE_PROGRAM_ID,
+      keys: [
+        { pubkey: realmPda, isSigner: false, isWritable: false },
+        { pubkey: governingTokenOwner, isSigner: false, isWritable: false },
+        { pubkey: tokenOwnerRecordPda, isSigner: false, isWritable: true },
+        { pubkey: governingTokenMint, isSigner: false, isWritable: false },
+        { pubkey: payerKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data,
+    }),
+    tokenOwnerRecordPda,
+  };
+}
+
+export function buildCreateGovernanceInstruction(
+  realmPda: PublicKey,
+  governedAccount: PublicKey,
+  tokenOwnerRecordPda: PublicKey,
+  payerKey: PublicKey,
+  createAuthority: PublicKey,
+  voterWeightRecordPda?: PublicKey
+): { instruction: TransactionInstruction; governancePda: PublicKey } {
+  const [governancePda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("account-governance"),
+      realmPda.toBuffer(),
+      governedAccount.toBuffer(),
+    ],
+    GOVERNANCE_PROGRAM_ID
+  );
+  const [realmConfigPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("realm-config"), realmPda.toBuffer()],
+    GOVERNANCE_PROGRAM_ID
+  );
+
+  const keys = [
+    { pubkey: realmPda, isSigner: false, isWritable: false },
+    { pubkey: governancePda, isSigner: false, isWritable: true },
+    { pubkey: governedAccount, isSigner: false, isWritable: false },
+    { pubkey: tokenOwnerRecordPda, isSigner: false, isWritable: false },
+    { pubkey: payerKey, isSigner: true, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    { pubkey: createAuthority, isSigner: true, isWritable: false },
+    { pubkey: realmConfigPda, isSigner: false, isWritable: false },
+  ];
+
+  if (voterWeightRecordPda) {
+    keys.push({
+      pubkey: voterWeightRecordPda,
+      isSigner: false,
+      isWritable: false,
+    });
+  }
+
+  // GovernanceInstruction::CreateGovernance = 4
+  const parts: Buffer[] = [];
+  parts.push(Buffer.from([4]));
+  parts.push(Buffer.from([0, 60])); // community_vote_threshold: YesVotePercentage(60)
+  const minCommunityWeight = Buffer.alloc(8);
+  minCommunityWeight.writeBigUInt64LE(1n);
+  parts.push(minCommunityWeight);
+  const minHoldUpTime = Buffer.alloc(4);
+  minHoldUpTime.writeUInt32LE(0);
+  parts.push(minHoldUpTime);
+  const votingBaseTime = Buffer.alloc(4);
+  votingBaseTime.writeUInt32LE(3600);
+  parts.push(votingBaseTime);
+  parts.push(Buffer.from([0])); // community_vote_tipping: Strict
+  parts.push(Buffer.from([2])); // council_vote_threshold: Disabled
+  parts.push(Buffer.from([2])); // council_veto_vote_threshold: Disabled
+  const minCouncilWeight = Buffer.alloc(8);
+  minCouncilWeight.writeBigUInt64LE(1n);
+  parts.push(minCouncilWeight);
+  parts.push(Buffer.from([2])); // council_vote_tipping: Disabled
+  parts.push(Buffer.from([2])); // community_veto_vote_threshold: Disabled
+  const votingCoolOffTime = Buffer.alloc(4);
+  votingCoolOffTime.writeUInt32LE(0);
+  parts.push(votingCoolOffTime);
+  parts.push(Buffer.from([10])); // deposit_exempt_proposal_count: 10
+
+  return {
+    instruction: new TransactionInstruction({
+      programId: GOVERNANCE_PROGRAM_ID,
+      keys,
+      data: Buffer.concat(parts),
+    }),
+    governancePda,
+  };
+}
+
 export function buildCloseVoterWeightRecordInstruction(
   registrarPda: PublicKey,
   vwrPda: PublicKey,

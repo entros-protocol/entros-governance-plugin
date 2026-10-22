@@ -9,6 +9,7 @@ mod instructions;
 pub mod state;
 
 use instructions::*;
+use state::VoterWeightAction;
 
 declare_id!("99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534");
 
@@ -46,6 +47,18 @@ pub mod entros_voter_weight {
         ctx: Context<'_, '_, 'info, 'info, UpdateVoterWeightRecord<'info>>,
     ) -> Result<()> {
         instructions::update_voter_weight_record::update_voter_weight_record(ctx)
+    }
+
+    pub fn update_voter_weight_record_for_action<'info>(
+        ctx: Context<'_, '_, 'info, 'info, UpdateVoterWeightRecord<'info>>,
+        weight_action: VoterWeightAction,
+        weight_action_target: Pubkey,
+    ) -> Result<()> {
+        instructions::update_voter_weight_record::update_voter_weight_record_for_action(
+            ctx,
+            weight_action,
+            weight_action_target,
+        )
     }
 
     pub fn close_registrar(ctx: Context<CloseRegistrar>) -> Result<()> {
