@@ -80,8 +80,8 @@ Requires:
 - Anchor 0.32.1
 - Solana CLI 2.2.1
 - Rust 1.91.0
-- Node.js 24.15.0
-- npm 11.12.1
+- Node.js 24.22.1
+- npm 11.19.1
 
 ## Test
 

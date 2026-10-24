@@ -1,10 +1,10 @@
 {
   "name": "entros-governance-plugin",
   "private": true,
-  "packageManager": "npm@11.12.1",
+  "packageManager": "npm@11.19.1",
   "engines": {
     "node": ">=24.15.0 <25",
-    "npm": "11.12.1"
+    "npm": "11.19.1"
   },
   "scripts": {
     "fixtures:generate": "node --import tsx scripts/generate-test-fixtures.ts",
