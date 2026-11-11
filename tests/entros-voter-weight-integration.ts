@@ -8,7 +8,10 @@ import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import {
+  createAssociatedTokenAccountInstruction,
   createInitializeMintInstruction,
+  createMintToInstruction,
+  getAssociatedTokenAddressSync,
   TOKEN_PROGRAM_ID,
   MINT_SIZE,
   getMinimumBalanceForRentExemptMint,
@@ -26,6 +29,10 @@ import {
   buildUpdateVoterWeightRecordForActionInstruction,
   buildCreateTokenOwnerRecordInstruction,
   buildCreateGovernanceInstruction,
+  buildCreateProposalInstruction,
+  buildSignOffProposalInstruction,
+  buildCastVoteInstruction,
+  deriveMigrationRecordPda,
   VoterWeightActionTag,
   buildCloseVoterWeightRecordInstruction,
   buildCloseRegistrarInstruction,
@@ -65,6 +72,28 @@ const VOTER_C = Keypair.fromSecretKey(
   ])
 );
 
+// VOTER_D: trust score 200. Its migration record names slot 0, so its identity
+// arrived before any proposal in these tests entered voting.
+const VOTER_D = Keypair.fromSecretKey(
+  new Uint8Array([
+    114, 88, 10, 140, 125, 118, 118, 100, 17, 35, 223, 92, 178, 17, 194, 239,
+    234, 174, 31, 197, 141, 240, 115, 15, 224, 193, 209, 131, 58, 175, 182,
+    193, 19, 117, 210, 98, 48, 66, 152, 207, 182, 64, 16, 121, 6, 208, 133, 17,
+    253, 254, 92, 163, 255, 221, 114, 36, 236, 145, 113, 29, 166, 27, 226, 193,
+  ])
+);
+
+// VOTER_E: trust score 200. Its migration record names a slot no test reaches,
+// so its identity arrived after every proposal in these tests entered voting.
+const VOTER_E = Keypair.fromSecretKey(
+  new Uint8Array([
+    143, 238, 18, 196, 164, 64, 212, 237, 116, 171, 122, 248, 99, 232, 114,
+    213, 231, 56, 196, 92, 11, 187, 3, 206, 153, 23, 89, 34, 156, 109, 205, 32,
+    204, 40, 39, 192, 160, 52, 196, 208, 203, 146, 165, 76, 86, 191, 234, 145,
+    67, 16, 250, 37, 198, 238, 160, 86, 111, 39, 188, 88, 15, 112, 211, 75,
+  ])
+);
+
 const connection = new Connection("http://localhost:8899", "confirmed");
 const payer = VOTER_A;
 
@@ -84,6 +113,14 @@ const [VOTER_B_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
 );
 const [VOTER_C_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
   [Buffer.from("identity"), VOTER_C.publicKey.toBuffer()],
+  ENTROS_ANCHOR_PROGRAM_ID
+);
+const [VOTER_D_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from("identity"), VOTER_D.publicKey.toBuffer()],
+  ENTROS_ANCHOR_PROGRAM_ID
+);
+const [VOTER_E_IDENTITY_PDA] = PublicKey.findProgramAddressSync(
+  [Buffer.from("identity"), VOTER_E.publicKey.toBuffer()],
   ENTROS_ANCHOR_PROGRAM_ID
 );
 
@@ -258,7 +295,7 @@ describe("entros-voter-weight integration", () => {
       expect(expiryValue).to.equal(0n); // expired
     });
 
-    it("updates voter weight record -> voter_weight=1 with 10-slot expiry", async () => {
+    it("updates voter weight record -> voter_weight=1 with current-slot expiry", async () => {
       const preSlot = BigInt(await connection.getSlot("confirmed"));
       const ix = buildUpdateVoterWeightRecordInstruction(
         registrarPda,
@@ -278,9 +315,9 @@ describe("entros-voter-weight integration", () => {
       const expiryTag = account!.data.readUInt8(112);
       expect(expiryTag).to.equal(1);
       const expiryValue = account!.data.readBigUInt64LE(113);
-      // Expiry is clock.slot + 10
-      expect(expiryValue >= preSlot + 10n).to.be.true;
-      expect(expiryValue <= postSlot + 10n).to.be.true;
+      // Expiry is the slot of the update
+      expect(expiryValue >= preSlot).to.be.true;
+      expect(expiryValue <= postSlot).to.be.true;
 
       // weight_action (offset 121) and weight_action_target (offset 122) are None (0)
       expect(account!.data.readUInt8(121)).to.equal(0);
@@ -1127,7 +1164,7 @@ describe("entros-voter-weight integration", () => {
       ).to.equal(govRealmPda.toBase58());
     });
 
-    it("expires standalone 10-slot update after 10 slots", async () => {
+    it("expires a standalone update after its slot", async () => {
       const updateIx = buildUpdateVoterWeightRecordInstruction(
         govRegistrarPda,
         govVwrA,
@@ -1213,6 +1250,402 @@ describe("entros-voter-weight integration", () => {
           [govRealmAuthority]
         );
       }
+    });
+  });
+
+  describe("vote weight after an identity migration", () => {
+    // One identity keeps its trust score and verification time when it moves to a
+    // new wallet, and spl-governance counts one vote per wallet. These cases cover
+    // the rule that stops the identity from voting on one proposal from two wallets.
+    const voters = [
+      { keypair: VOTER_A, identity: VOTER_A_IDENTITY_PDA },
+      { keypair: VOTER_D, identity: VOTER_D_IDENTITY_PDA },
+      { keypair: VOTER_E, identity: VOTER_E_IDENTITY_PDA },
+    ];
+    const weightRecords = new Map<string, PublicKey>();
+    const ownerRecords = new Map<string, PublicKey>();
+
+    let voteRealmAuthority: Keypair;
+    let voteMint: PublicKey;
+    let voteRealmPda: PublicKey;
+    let voteRegistrarPda: PublicKey;
+    let voteGovernancePda: PublicKey;
+    let proposalPda: PublicKey;
+
+    const weightRecordOf = (voter: Keypair) =>
+      weightRecords.get(voter.publicKey.toBase58())!;
+    const ownerRecordOf = (voter: Keypair) =>
+      ownerRecords.get(voter.publicKey.toBase58())!;
+
+    function voteUpdate(
+      voter: Keypair,
+      identity: PublicKey,
+      target: PublicKey,
+      overrides = {}
+    ) {
+      return buildUpdateVoterWeightRecordForActionInstruction(
+        voteRegistrarPda,
+        weightRecordOf(voter),
+        voter.publicKey,
+        identity,
+        VoterWeightActionTag.CastVote,
+        target,
+        overrides
+      );
+    }
+
+    function castVote(voter: Keypair, proposal: PublicKey) {
+      return buildCastVoteInstruction(
+        voteRealmPda,
+        voteGovernancePda,
+        proposal,
+        ownerRecordOf(VOTER_A),
+        ownerRecordOf(voter),
+        voter.publicKey,
+        voteMint,
+        voter.publicKey,
+        weightRecordOf(voter)
+      );
+    }
+
+    async function createProposal(
+      name: string,
+      creator: Keypair = VOTER_A,
+      identity: PublicKey = VOTER_A_IDENTITY_PDA
+    ): Promise<PublicKey> {
+      const updateIx = buildUpdateVoterWeightRecordForActionInstruction(
+        voteRegistrarPda,
+        weightRecordOf(creator),
+        creator.publicKey,
+        identity,
+        VoterWeightActionTag.CreateProposal,
+        voteGovernancePda
+      );
+      const proposal = buildCreateProposalInstruction(
+        voteRealmPda,
+        voteGovernancePda,
+        ownerRecordOf(creator),
+        voteMint,
+        creator.publicKey,
+        creator.publicKey,
+        Keypair.generate().publicKey,
+        weightRecordOf(creator),
+        name
+      );
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(updateIx, proposal.instruction),
+        [creator]
+      );
+      return proposal.proposalPda;
+    }
+
+    before(async () => {
+      voteRealmAuthority = Keypair.generate();
+      await fundSigner(voteRealmAuthority.publicKey);
+
+      voteMint = await createMint(payer);
+      // The mint supply is the largest possible vote weight. With a supply of 100,
+      // a single vote does not decide the proposal, so it stays in voting.
+      const supplyAccount = getAssociatedTokenAddressSync(
+        voteMint,
+        payer.publicKey
+      );
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          createAssociatedTokenAccountInstruction(
+            payer.publicKey,
+            supplyAccount,
+            payer.publicKey,
+            voteMint
+          ),
+          createMintToInstruction(voteMint, supplyAccount, payer.publicKey, 100)
+        ),
+        [payer]
+      );
+      const realm = buildCreateRealmInstruction(
+        `Vote-Migration-${Date.now().toString(36)}`,
+        voteRealmAuthority.publicKey,
+        voteMint,
+        payer.publicKey,
+        PLUGIN_PROGRAM_ID
+      );
+      voteRealmPda = realm.realmPda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(realm.instruction),
+        [payer]
+      );
+
+      const registrar = buildCreateRegistrarInstruction(
+        voteRealmPda,
+        voteMint,
+        voteRealmAuthority.publicKey,
+        payer.publicKey,
+        100,
+        2000000000n
+      );
+      voteRegistrarPda = registrar.registrarPda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(registrar.instruction),
+        [payer, voteRealmAuthority]
+      );
+
+      for (const { keypair } of voters) {
+        const vwr = buildCreateVoterWeightRecordInstruction(
+          voteRegistrarPda,
+          voteRealmPda,
+          voteMint,
+          keypair.publicKey,
+          payer.publicKey
+        );
+        const tor = buildCreateTokenOwnerRecordInstruction(
+          voteRealmPda,
+          keypair.publicKey,
+          voteMint,
+          payer.publicKey
+        );
+        // The voter signs for its own voter weight record.
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(vwr.instruction, tor.instruction),
+          keypair === payer ? [payer] : [payer, keypair]
+        );
+        weightRecords.set(keypair.publicKey.toBase58(), vwr.vwrPda);
+        ownerRecords.set(keypair.publicKey.toBase58(), tor.tokenOwnerRecordPda);
+      }
+
+      const governanceUpdate = buildUpdateVoterWeightRecordForActionInstruction(
+        voteRegistrarPda,
+        weightRecordOf(VOTER_A),
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        VoterWeightActionTag.CreateGovernance,
+        voteRealmPda
+      );
+      const governance = buildCreateGovernanceInstruction(
+        voteRealmPda,
+        Keypair.generate().publicKey,
+        ownerRecordOf(VOTER_A),
+        VOTER_A.publicKey,
+        VOTER_A.publicKey,
+        weightRecordOf(VOTER_A)
+      );
+      voteGovernancePda = governance.governancePda;
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(governanceUpdate, governance.instruction),
+        [VOTER_A]
+      );
+
+      proposalPda = await createProposal("Vote after migration");
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          buildSignOffProposalInstruction(
+            voteRealmPda,
+            voteGovernancePda,
+            proposalPda,
+            VOTER_A.publicKey,
+            ownerRecordOf(VOTER_A)
+          )
+        ),
+        [VOTER_A]
+      );
+    });
+
+    it("counts the vote of a wallet that never received a migration", async () => {
+      const vote = castVote(VOTER_A, proposalPda);
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          voteUpdate(VOTER_A, VOTER_A_IDENTITY_PDA, proposalPda),
+          vote.instruction
+        ),
+        [VOTER_A]
+      );
+      expect(await connection.getAccountInfo(vote.voteRecordPda)).to.not.be.null;
+    });
+
+    it("counts the vote of a wallet whose identity arrived before voting started", async () => {
+      const vote = castVote(VOTER_D, proposalPda);
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          voteUpdate(VOTER_D, VOTER_D_IDENTITY_PDA, proposalPda),
+          vote.instruction
+        ),
+        [VOTER_D]
+      );
+      expect(await connection.getAccountInfo(vote.voteRecordPda)).to.not.be.null;
+    });
+
+    it("refuses the vote of a wallet whose identity arrived after voting started", async () => {
+      const vote = castVote(VOTER_E, proposalPda);
+      try {
+        await sendAndConfirmTransaction(
+          connection,
+          new Transaction().add(
+            voteUpdate(VOTER_E, VOTER_E_IDENTITY_PDA, proposalPda),
+            vote.instruction
+          ),
+          [VOTER_E]
+        );
+        expect.fail("Should have failed with IdentityMigratedAfterVotingStart");
+      } catch (err) {
+        expectError(err, 6022); // EntrosVoterError::IdentityMigratedAfterVotingStart
+      }
+      expect(await connection.getAccountInfo(vote.voteRecordPda)).to.be.null;
+    });
+
+    it("refuses the general update for a wallet that received a migration", async () => {
+      const ix = buildUpdateVoterWeightRecordInstruction(
+        voteRegistrarPda,
+        weightRecordOf(VOTER_D),
+        VOTER_D.publicKey,
+        VOTER_D_IDENTITY_PDA
+      );
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_D,
+        ]);
+        expect.fail("Should have failed with MigratedIdentityNeedsActionTarget");
+      } catch (err) {
+        expectError(err, 6018); // EntrosVoterError::MigratedIdentityNeedsActionTarget
+      }
+    });
+
+    it("refuses the general update without the migration record account", async () => {
+      const ix = buildUpdateVoterWeightRecordInstruction(
+        voteRegistrarPda,
+        weightRecordOf(VOTER_A),
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA,
+        { migrationRecord: null }
+      );
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_A,
+        ]);
+        expect.fail("Should have failed with MissingMigrationRecord");
+      } catch (err) {
+        expectError(err, 6015); // EntrosVoterError::MissingMigrationRecord
+      }
+    });
+
+    it("refuses a vote update that names another wallet's migration record", async () => {
+      // A migrated wallet must not present the empty record address of a wallet
+      // that never migrated.
+      const ix = voteUpdate(VOTER_E, VOTER_E_IDENTITY_PDA, proposalPda, {
+        migrationRecord: deriveMigrationRecordPda(VOTER_A.publicKey),
+      });
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_E,
+        ]);
+        expect.fail("Should have failed with InvalidMigrationRecordPda");
+      } catch (err) {
+        expectError(err, 6016); // EntrosVoterError::InvalidMigrationRecordPda
+      }
+    });
+
+    it("refuses a vote update without the proposal account", async () => {
+      const ix = voteUpdate(VOTER_A, VOTER_A_IDENTITY_PDA, proposalPda, {
+        proposal: null,
+      });
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_A,
+        ]);
+        expect.fail("Should have failed with MissingProposalAccount");
+      } catch (err) {
+        expectError(err, 6019); // EntrosVoterError::MissingProposalAccount
+      }
+    });
+
+    it("refuses a vote update whose proposal account is not the target", async () => {
+      const ix = voteUpdate(VOTER_A, VOTER_A_IDENTITY_PDA, proposalPda, {
+        proposal: voteGovernancePda,
+      });
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_A,
+        ]);
+        expect.fail("Should have failed with InvalidProposalAccount");
+      } catch (err) {
+        expectError(err, 6020); // EntrosVoterError::InvalidProposalAccount
+      }
+    });
+
+    it("refuses a migrated wallet's vote update for a target that is no proposal", async () => {
+      const ix = voteUpdate(VOTER_D, VOTER_D_IDENTITY_PDA, voteGovernancePda);
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_D,
+        ]);
+        expect.fail("Should have failed with InvalidProposalAccount");
+      } catch (err) {
+        expectError(err, 6020); // EntrosVoterError::InvalidProposalAccount
+      }
+    });
+
+    it("refuses a migrated wallet's vote update for a proposal that is not in voting", async () => {
+      const draftPda = await createProposal("Draft proposal");
+      const ix = voteUpdate(VOTER_D, VOTER_D_IDENTITY_PDA, draftPda);
+      try {
+        await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+          VOTER_D,
+        ]);
+        expect.fail("Should have failed with ProposalNotInVoting");
+      } catch (err) {
+        expectError(err, 6021); // EntrosVoterError::ProposalNotInVoting
+      }
+    });
+
+    it("lets a wallet that received a migration create a proposal", async () => {
+      // The vote rule covers votes alone. Every other action takes the identity
+      // account and nothing else, for a migrated wallet too.
+      const created = await createProposal(
+        "Proposal by a migrated wallet",
+        VOTER_E,
+        VOTER_E_IDENTITY_PDA
+      );
+      expect(await connection.getAccountInfo(created)).to.not.equal(null);
+    });
+
+    it("reads lamports at a migration record address as no record", async () => {
+      // Anyone can send lamports to a wallet's record address. That must not make
+      // the wallet look migrated.
+      const recordAddress = deriveMigrationRecordPda(VOTER_A.publicKey);
+      await sendAndConfirmTransaction(
+        connection,
+        new Transaction().add(
+          SystemProgram.transfer({
+            fromPubkey: payer.publicKey,
+            toPubkey: recordAddress,
+            lamports: LAMPORTS_PER_SOL / 100,
+          })
+        ),
+        [payer]
+      );
+      const funded = await connection.getAccountInfo(recordAddress);
+      expect(funded!.owner.toBase58()).to.equal(
+        SystemProgram.programId.toBase58()
+      );
+
+      const ix = buildUpdateVoterWeightRecordInstruction(
+        voteRegistrarPda,
+        weightRecordOf(VOTER_A),
+        VOTER_A.publicKey,
+        VOTER_A_IDENTITY_PDA
+      );
+      await sendAndConfirmTransaction(connection, new Transaction().add(ix), [
+        VOTER_A,
+      ]);
+      const account = await connection.getAccountInfo(weightRecordOf(VOTER_A));
+      expect(account!.data.readBigUInt64LE(104)).to.equal(1n);
     });
   });
 });

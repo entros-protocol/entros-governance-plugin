@@ -21,8 +21,13 @@ const IDENTITY_MIN_DATA_LEN: usize = 62;
 /// be reinterpreted as IdentityState.
 const IDENTITY_DISCRIMINATOR: [u8; 8] = [156, 32, 87, 93, 52, 155, 248, 207];
 
-/// Slot window (~4 seconds at 400ms/slot) for general `update_voter_weight_record`.
-pub const VOTER_WEIGHT_EXPIRY_SLOT_WINDOW: u64 = 10;
+/// Anchor account discriminator for MigrationRecord = sha256("account:MigrationRecord")[0..8].
+const MIGRATION_RECORD_DISCRIMINATOR: [u8; 8] = [16, 36, 116, 243, 192, 61, 40, 1];
+/// Byte offset of migrated_slot (u64 LE) in MigrationRecord account data
+const MIGRATION_RECORD_SLOT_OFFSET: usize = 16;
+/// MigrationRecord account data length. The slot sits in a prefix that later
+/// fields leave in place, so a longer record still parses.
+const MIGRATION_RECORD_LEN: usize = 57;
 
 #[derive(Accounts)]
 pub struct UpdateVoterWeightRecord<'info> {
@@ -44,6 +49,72 @@ pub struct UpdateVoterWeightRecord<'info> {
     /// The voter whose weight is being updated. Must match the voter weight record owner.
     pub voter_authority: Signer<'info>,
     // remaining_accounts[0] = Entros IdentityState PDA (read-only)
+    // remaining_accounts[1] = Entros MigrationRecord PDA for the voter (read-only).
+    //   Required by the general update and by a vote.
+    // remaining_accounts[2] = the Proposal (read-only). Required by a vote.
+}
+
+/// Reads the slot at which the voter's identity arrived at this wallet.
+///
+/// An identity keeps its trust score and verification time when it moves to a new
+/// wallet, and spl-governance counts one vote per wallet. The slot lets a vote
+/// count only on a proposal that entered voting after the identity arrived.
+///
+/// `None` means the wallet never received a migrated identity.
+fn read_migration_slot(voter: Pubkey, record_info: Option<&AccountInfo>) -> Result<Option<u64>> {
+    let record_info = record_info.ok_or(error!(EntrosVoterError::MissingMigrationRecord))?;
+    let (expected_pda, _bump) =
+        Pubkey::find_program_address(&[b"migration", voter.as_ref()], &ENTROS_ANCHOR_PROGRAM_ID);
+    require!(
+        record_info.key() == expected_pda,
+        EntrosVoterError::InvalidMigrationRecordPda
+    );
+
+    // The Entros Anchor program alone can own an account at this address, and it
+    // writes one on each migration. Any other owner, lamports sent here included,
+    // means no migration to this wallet happened.
+    if *record_info.owner != ENTROS_ANCHOR_PROGRAM_ID {
+        return Ok(None);
+    }
+
+    let data = record_info.try_borrow_data()?;
+    parse_migration_slot(&data).map(Some)
+}
+
+fn parse_migration_slot(data: &[u8]) -> Result<u64> {
+    require!(
+        data.len() >= MIGRATION_RECORD_LEN && data[..8] == MIGRATION_RECORD_DISCRIMINATOR,
+        EntrosVoterError::InvalidMigrationRecordData
+    );
+    let slot_bytes: [u8; 8] = data[MIGRATION_RECORD_SLOT_OFFSET..MIGRATION_RECORD_SLOT_OFFSET + 8]
+        .try_into()
+        .map_err(|_| error!(EntrosVoterError::InvalidMigrationRecordData))?;
+    Ok(u64::from_le_bytes(slot_bytes))
+}
+
+/// True when the identity arrived at the wallet before the proposal entered voting.
+///
+/// Strict: a migration in the slot that started voting is refused, because the
+/// previous wallet could have voted earlier in that slot.
+fn arrived_before_voting(migrated_slot: u64, voting_start_slot: u64) -> bool {
+    migrated_slot < voting_start_slot
+}
+
+/// Reads the slot at which the proposal entered voting.
+fn read_voting_start_slot(
+    governance_program_id: &Pubkey,
+    proposal_info: &AccountInfo,
+) -> Result<u64> {
+    require!(
+        proposal_info.owner == governance_program_id,
+        EntrosVoterError::InvalidProposalAccount
+    );
+    let proposal =
+        spl_governance::state::proposal::get_proposal_data(governance_program_id, proposal_info)
+            .map_err(|_| error!(EntrosVoterError::InvalidProposalAccount))?;
+    proposal
+        .voting_at_slot
+        .ok_or(error!(EntrosVoterError::ProposalNotInVoting))
 }
 
 fn verify_voter_identity_and_recency<'info>(
@@ -138,16 +209,27 @@ pub fn update_voter_weight_record<'info>(
         ctx.remaining_accounts,
     )?;
 
+    // 9. This weight names no proposal, so it cannot be checked against a migration.
+    // A wallet that received a migrated identity uses the action-bound update.
+    let migration_slot = read_migration_slot(
+        ctx.accounts.voter_authority.key(),
+        ctx.remaining_accounts.get(1),
+    )?;
+    require!(
+        migration_slot.is_none(),
+        EntrosVoterError::MigratedIdentityNeedsActionTarget
+    );
+
     let voter_weight_record = &mut ctx.accounts.voter_weight_record;
 
-    // 9. One person, one vote
+    // 10. One person, one vote
     voter_weight_record.voter_weight = 1;
 
-    // 10. Expire after ~4 seconds (10 slots). Tightened slot window for standalone updates.
-    voter_weight_record.voter_weight_expiry =
-        Some(clock.slot.saturating_add(VOTER_WEIGHT_EXPIRY_SLOT_WINDOW));
+    // 11. Current-slot expiry. A longer window would let a wallet vote after its
+    // identity moved to another wallet.
+    voter_weight_record.voter_weight_expiry = Some(clock.slot);
 
-    // 11. Weight applies to any governance action within the 10-slot window
+    // 12. Weight applies to any governance action in this slot
     voter_weight_record.weight_action = None;
     voter_weight_record.weight_action_target = None;
 
@@ -171,15 +253,43 @@ pub fn update_voter_weight_record_for_action<'info>(
         ctx.remaining_accounts,
     )?;
 
+    // 9. A vote from a wallet that received a migrated identity counts only on a
+    // proposal that entered voting after the identity arrived. The previous wallet
+    // could have voted on every proposal that was already in voting.
+    if weight_action == VoterWeightAction::CastVote {
+        let migration_slot = read_migration_slot(
+            ctx.accounts.voter_authority.key(),
+            ctx.remaining_accounts.get(1),
+        )?;
+        let proposal_info = ctx
+            .remaining_accounts
+            .get(2)
+            .ok_or(error!(EntrosVoterError::MissingProposalAccount))?;
+        require!(
+            proposal_info.key() == weight_action_target,
+            EntrosVoterError::InvalidProposalAccount
+        );
+        if let Some(migrated_slot) = migration_slot {
+            let voting_start_slot = read_voting_start_slot(
+                &ctx.accounts.registrar.governance_program_id,
+                proposal_info,
+            )?;
+            require!(
+                arrived_before_voting(migrated_slot, voting_start_slot),
+                EntrosVoterError::IdentityMigratedAfterVotingStart
+            );
+        }
+    }
+
     let voter_weight_record = &mut ctx.accounts.voter_weight_record;
 
-    // 9. One person, one vote
+    // 10. One person, one vote
     voter_weight_record.voter_weight = 1;
 
-    // 10. Current-slot expiry: requires consumption in the same slot / atomic transaction.
+    // 11. Current-slot expiry: requires consumption in the same slot / atomic transaction.
     voter_weight_record.voter_weight_expiry = Some(clock.slot);
 
-    // 11. Bind weight to the exact governance action and target account.
+    // 12. Bind weight to the exact governance action and target account.
     voter_weight_record.weight_action = Some(weight_action.into());
     voter_weight_record.weight_action_target = Some(weight_action_target);
 
@@ -193,9 +303,40 @@ mod tests {
         VoterWeightAction as AddinAction, VoterWeightRecord as AddinRecord,
     };
 
+    /// The Entros Anchor program serializes its migration record to these bytes.
+    const MIGRATION_RECORD_BYTES: [u8; 57] = [
+        0x10, 0x24, 0x74, 0xf3, 0xc0, 0x3d, 0x28, 0x01, 0x80, 0x7c, 0x12, 0x69, 0x00, 0x00, 0x00,
+        0x00, 0x51, 0x4b, 0x0c, 0x1f, 0x00, 0x00, 0x00, 0x00, 0xfe, 0x11, 0x11, 0x11, 0x11, 0x11,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+        0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+    ];
+
     #[test]
-    fn voter_weight_expiry_slot_window_is_ten_slots() {
-        assert_eq!(VOTER_WEIGHT_EXPIRY_SLOT_WINDOW, 10);
+    fn a_vote_needs_the_identity_to_arrive_before_voting_started() {
+        assert!(arrived_before_voting(99, 100));
+        assert!(!arrived_before_voting(100, 100));
+        assert!(!arrived_before_voting(101, 100));
+    }
+
+    #[test]
+    fn migration_slot_parses_from_the_anchor_program_layout() {
+        assert_eq!(
+            parse_migration_slot(&MIGRATION_RECORD_BYTES).unwrap(),
+            520_899_409
+        );
+    }
+
+    #[test]
+    fn migration_record_with_another_discriminator_is_refused() {
+        let mut bytes = MIGRATION_RECORD_BYTES;
+        bytes[0] ^= 1;
+        assert!(parse_migration_slot(&bytes).is_err());
+    }
+
+    #[test]
+    fn truncated_migration_record_is_refused() {
+        assert!(parse_migration_slot(&MIGRATION_RECORD_BYTES[..56]).is_err());
+        assert!(parse_migration_slot(&[]).is_err());
     }
 
     #[test]

@@ -8,9 +8,15 @@ readonly GOVERNANCE_PROGRAM_ID="GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw"
 readonly IDENTITY_A="63cKuvoe9WuNH9Ds6aXF7iSc4jHmJc4ZkxdHTaitJ5tr"
 readonly IDENTITY_B="73gAPp8WuNzdHh4E5ySQNFR3jpw8qs5YFaYPp8iyt6FZ"
 readonly IDENTITY_C="6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP"
+readonly IDENTITY_D="Hnevj4r58MKaDuMSJmgZrTctLhLC4jpSU8HkAgHviE6y"
+readonly IDENTITY_E="4qywCJ83UE8X19Qcm74xZfb45LeNEmJ8XSpqavcXzRzF"
+readonly MIGRATION_RECORD_D="8svmyZguRZdzYtqi4P4eG7nkpactKUMJy4D2CmYr3aD8"
+readonly MIGRATION_RECORD_E="7BrXUkXqB1ywZYKsHGFcndkS5orDB99PMgYE3YriAzJS"
 readonly LOCAL_PAYER="4LUBgwDTumszi3yRFhiXoaXswUzPB3FdbEmZNpanVidL"
 readonly VOTER_B="7MQwaHdSqa2gBJuvH6VrsFMPtogDMkvnbovTbWd7u375"
 readonly VOTER_C="GHscGvrXbPnNuh71gbqsDQvJ5QUbdDYKim3DfAKPcWUH"
+readonly VOTER_D="2Jxx1djv7TBdNBR5nAN4cb6QPTm9wfEz9CuYeKPH7WJc"
+readonly VOTER_E="Ejwgfa2Sg23rfB4Te3on47GYkcQc1XpxDUbrw5CnFnqx"
 readonly RPC_URL="http://127.0.0.1:8899"
 
 SCRIPT_DIRECTORY="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -40,6 +46,10 @@ readonly GOVERNANCE_BINARY="$REPOSITORY_ROOT/tests/fixtures/spl_governance.so"
 readonly IDENTITY_A_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/identity-state-a.json"
 readonly IDENTITY_B_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/identity-state-b.json"
 readonly IDENTITY_C_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/identity-state-c.json"
+readonly IDENTITY_D_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/identity-state-d.json"
+readonly IDENTITY_E_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/identity-state-e.json"
+readonly MIGRATION_RECORD_D_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/migration-record-d.json"
+readonly MIGRATION_RECORD_E_FIXTURE="$REPOSITORY_ROOT/tests/fixtures/migration-record-e.json"
 
 for required_file in \
   "$PLUGIN_BINARY" \
@@ -47,7 +57,11 @@ for required_file in \
   "$GOVERNANCE_BINARY" \
   "$IDENTITY_A_FIXTURE" \
   "$IDENTITY_B_FIXTURE" \
-  "$IDENTITY_C_FIXTURE"; do
+  "$IDENTITY_C_FIXTURE" \
+  "$IDENTITY_D_FIXTURE" \
+  "$IDENTITY_E_FIXTURE" \
+  "$MIGRATION_RECORD_D_FIXTURE" \
+  "$MIGRATION_RECORD_E_FIXTURE"; do
   if [[ ! -f "$required_file" ]]; then
     echo "Required test input is unavailable: $required_file" >&2
     exit 1
@@ -79,6 +93,8 @@ readonly GENERATED_FIXTURE_DIRECTORY="$RUN_DIRECTORY/fixtures"
 readonly LOCAL_PAYER_FIXTURE="$GENERATED_FIXTURE_DIRECTORY/voter-a-wallet.json"
 readonly VOTER_B_WALLET_FIXTURE="$GENERATED_FIXTURE_DIRECTORY/voter-b-wallet.json"
 readonly VOTER_C_WALLET_FIXTURE="$GENERATED_FIXTURE_DIRECTORY/voter-c-wallet.json"
+readonly VOTER_D_WALLET_FIXTURE="$GENERATED_FIXTURE_DIRECTORY/voter-d-wallet.json"
+readonly VOTER_E_WALLET_FIXTURE="$GENERATED_FIXTURE_DIRECTORY/voter-e-wallet.json"
 VALIDATOR_PID=""
 
 cleanup() {
@@ -133,7 +149,9 @@ npm run fixtures:generate -- --output-dir "$GENERATED_FIXTURE_DIRECTORY" >/dev/n
 for generated_file in \
   "$LOCAL_PAYER_FIXTURE" \
   "$VOTER_B_WALLET_FIXTURE" \
-  "$VOTER_C_WALLET_FIXTURE"; do
+  "$VOTER_C_WALLET_FIXTURE" \
+  "$VOTER_D_WALLET_FIXTURE" \
+  "$VOTER_E_WALLET_FIXTURE"; do
   if [[ ! -f "$generated_file" ]]; then
     echo "Local wallet fixture was not generated: $generated_file" >&2
     exit 1
@@ -151,9 +169,15 @@ solana-test-validator \
   --account "$IDENTITY_A" "$IDENTITY_A_FIXTURE" \
   --account "$IDENTITY_B" "$IDENTITY_B_FIXTURE" \
   --account "$IDENTITY_C" "$IDENTITY_C_FIXTURE" \
+  --account "$IDENTITY_D" "$IDENTITY_D_FIXTURE" \
+  --account "$IDENTITY_E" "$IDENTITY_E_FIXTURE" \
+  --account "$MIGRATION_RECORD_D" "$MIGRATION_RECORD_D_FIXTURE" \
+  --account "$MIGRATION_RECORD_E" "$MIGRATION_RECORD_E_FIXTURE" \
   --account "$LOCAL_PAYER" "$LOCAL_PAYER_FIXTURE" \
   --account "$VOTER_B" "$VOTER_B_WALLET_FIXTURE" \
   --account "$VOTER_C" "$VOTER_C_WALLET_FIXTURE" \
+  --account "$VOTER_D" "$VOTER_D_WALLET_FIXTURE" \
+  --account "$VOTER_E" "$VOTER_E_WALLET_FIXTURE" \
   >"$VALIDATOR_LOG" 2>&1 &
 VALIDATOR_PID=$!
 

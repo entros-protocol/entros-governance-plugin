@@ -46,4 +46,28 @@ pub enum EntrosVoterError {
 
     #[msg("weight_action_target must not be the default pubkey")]
     InvalidWeightActionTarget,
+
+    #[msg("Migration record account missing from remaining_accounts")]
+    MissingMigrationRecord,
+
+    #[msg("Migration record address does not match expected PDA")]
+    InvalidMigrationRecordPda,
+
+    #[msg("Migration record account data is not a migration record")]
+    InvalidMigrationRecordData,
+
+    #[msg("A wallet that received a migrated identity must use an action-bound update")]
+    MigratedIdentityNeedsActionTarget,
+
+    #[msg("Proposal account missing from remaining_accounts")]
+    MissingProposalAccount,
+
+    #[msg("Proposal account does not match the vote target")]
+    InvalidProposalAccount,
+
+    #[msg("Proposal has not entered voting")]
+    ProposalNotInVoting,
+
+    #[msg("Identity migrated to this wallet after the proposal entered voting")]
+    IdentityMigratedAfterVotingStart,
 }

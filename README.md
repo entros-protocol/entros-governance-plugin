@@ -28,15 +28,35 @@ Future chaining can combine Entros eligibility with another voter-weight source.
 
 1. DAO admin calls `create_registrar` with a minimum Trust Score and maximum verification age
 2. Each voter calls `create_voter_weight_record` to initialize their record
-3. Before voting, the voter calls `update_voter_weight_record` which reads their Entros IdentityState PDA cross-program and checks:
+3. In the same transaction as the governance action, the voter calls an update instruction. It reads the voter's Entros IdentityState PDA cross-program and checks:
    - Trust Score meets the DAO's configured floor
    - The latest verification timestamp falls inside the DAO's configured window
-4. If both pass, the program sets `voter_weight` to `1` with a 100-slot expiry
+4. If both pass, the program sets `voter_weight` to `1`. The record expires with the current slot
 5. A future client can include the record update in a governance transaction
 
-The record expires after 100 slots. Active work will replace that fixed slot count with a duration-derived value.
+The update and the governance action share one transaction, because the record does not outlive its slot.
 
 Ineligible updates return an error. They do not write a zero-weight record.
+
+## One vote per identity
+
+An Entros identity can move to a new wallet and keep its Trust Score. The Entros Anchor program records the slot of each move in a migration record PDA with the seeds `["migration", wallet]`. The plugin reads that record, so an identity counts once on a proposal.
+
+- A wallet with no migration record votes on any proposal.
+- A wallet with a migration record votes on a proposal that entered voting after the identity arrived.
+- A wallet with a migration record cannot vote on a proposal that was in voting when the identity arrived. This holds even if the previous wallet cast no vote.
+- A wallet with a migration record uses `update_voter_weight_record_for_action`. The general update refuses it.
+- A migration record is permanent. A later migration to the same wallet overwrites it, so the general update stays refused for that wallet.
+
+Each update reads its evidence from the remaining accounts, in this order:
+
+| Update | Remaining accounts |
+|--------|--------------------|
+| `update_voter_weight_record` | IdentityState PDA, migration record PDA |
+| `update_voter_weight_record_for_action` with `CastVote` | IdentityState PDA, migration record PDA, proposal |
+| `update_voter_weight_record_for_action` with another action | IdentityState PDA |
+
+Pass the migration record address even when no account exists there. The proposal account must equal the action target.
 
 ## Instructions
 
@@ -46,7 +66,8 @@ Ineligible updates return an error. They do not write a zero-weight record.
 | `update_registrar` | DAO admin updates configuration parameters |
 | `close_registrar` | DAO admin closes the registrar and reclaims rent |
 | `create_voter_weight_record` | Initialize a voter's weight record (born expired) |
-| `update_voter_weight_record` | Read Entros IdentityState, validate trust score and recency, set voter_weight = 1 |
+| `update_voter_weight_record` | Read Entros IdentityState, validate trust score and recency, set voter_weight = 1 for any action in the current slot |
+| `update_voter_weight_record_for_action` | The same checks, with the weight bound to one governance action and its target |
 | `close_voter_weight_record` | Voter closes their record and reclaims rent |
 | `create_max_voter_weight_record` | DAO admin initializes quorum tracking (realm authority required) |
 | `update_max_voter_weight_record` | DAO admin sets the max voter weight (never expires, admin-managed) |
@@ -55,15 +76,16 @@ Ineligible updates return an error. They do not write a zero-weight record.
 
 ```
 Voter wants to cast a vote
-    → calls update_voter_weight_record
+    → calls update_voter_weight_record_for_action(CastVote, proposal)
     → plugin reads Entros IdentityState PDA (cross-program, no CPI)
     → checks trust_score >= min_trust_score
     → checks verification age < max_verification_age
-    → sets voter_weight = 1, expiry = current_slot + 100
-    → a future Realms client includes the record in a governance action
+    → reads the migration record PDA and, if one exists, the proposal's voting start slot
+    → sets voter_weight = 1, expiry = current_slot, bound to CastVote and the proposal
+    → the vote instruction follows in the same transaction
 ```
 
-The plugin reads the Entros IdentityState account via raw byte deserialization (not Anchor CPI) to avoid version coupling with the Entros Anchor program.
+The plugin reads the Entros IdentityState and migration record accounts via raw byte deserialization (not Anchor CPI) to avoid version coupling with the Entros Anchor program.
 
 ## Program ID
 
@@ -101,7 +123,7 @@ The localnet command loads the declared programs and account fixtures into an is
 
 Run `npm run fixtures:generate` only when the committed account fixtures need an intentional update. `npm run fixtures:verify` checks their hashes and reproducibility.
 
-39 tests: 20 unit tests and 19 integration tests.
+70 tests: 10 Rust unit tests, 21 TypeScript unit tests and 39 integration tests.
 
 ## Dependencies
 

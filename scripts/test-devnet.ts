@@ -228,6 +228,12 @@ function buildUpdateVoterWeightRecordInstruction(
   identityPda: PublicKey,
 ): TransactionInstruction {
   const disc = anchorDiscriminator("update_voter_weight_record");
+  // The account exists only for a wallet that received a migrated identity.
+  // The program needs its address either way.
+  const [migrationRecordPda] = PublicKey.findProgramAddressSync(
+    [Buffer.from("migration"), voterKey.toBuffer()],
+    ENTROS_ANCHOR_PROGRAM_ID,
+  );
 
   return new TransactionInstruction({
     programId: PLUGIN_PROGRAM_ID,
@@ -237,6 +243,8 @@ function buildUpdateVoterWeightRecordInstruction(
       { pubkey: voterKey, isSigner: true, isWritable: false },
       // remaining_accounts[0] = Entros IdentityState PDA
       { pubkey: identityPda, isSigner: false, isWritable: false },
+      // remaining_accounts[1] = Entros MigrationRecord PDA for the voter
+      { pubkey: migrationRecordPda, isSigner: false, isWritable: false },
     ],
     data: disc,
   });

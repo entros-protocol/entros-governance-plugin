@@ -52,6 +52,10 @@ try {
     "identity-state-a.json",
     "identity-state-b.json",
     "identity-state-c.json",
+    "identity-state-d.json",
+    "identity-state-e.json",
+    "migration-record-d.json",
+    "migration-record-e.json",
   ]) {
     const committed = readFileSync(join(repositoryRoot, "tests/fixtures", filename));
     const generated = readFileSync(join(temporaryDirectory, filename));
@@ -64,6 +68,8 @@ try {
     ["voter-a-wallet.json", "4LUBgwDTumszi3yRFhiXoaXswUzPB3FdbEmZNpanVidL", 1_000_000_000_000],
     ["voter-b-wallet.json", "7MQwaHdSqa2gBJuvH6VrsFMPtogDMkvnbovTbWd7u375", 10_000_000_000],
     ["voter-c-wallet.json", "GHscGvrXbPnNuh71gbqsDQvJ5QUbdDYKim3DfAKPcWUH", 10_000_000_000],
+    ["voter-d-wallet.json", "2Jxx1djv7TBdNBR5nAN4cb6QPTm9wfEz9CuYeKPH7WJc", 10_000_000_000],
+    ["voter-e-wallet.json", "Ejwgfa2Sg23rfB4Te3on47GYkcQc1XpxDUbrw5CnFnqx", 10_000_000_000],
   ];
 
   for (const [filename, pubkey, lamports] of fundedWallets) {
