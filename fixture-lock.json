@@ -5,6 +5,10 @@
     "tests/fixtures/spl_governance.so": "1059f12b6eee25487e6e0e93e44b98487242912d1dbe7ddb3640e0215e0d3395",
     "tests/fixtures/identity-state-a.json": "100307843f2635ce9f1a9b418bb077efb7576469c2b3b679b7f47e660c580c85",
     "tests/fixtures/identity-state-b.json": "a72ea81d8b57f2c6f496aa811ef529dff20f761854934d42d860905840e54728",
-    "tests/fixtures/identity-state-c.json": "a7f3d5fecc0b2636adbcbbd147d3495fc3fee274fe789dfc8997a282d720013e"
+    "tests/fixtures/identity-state-c.json": "a7f3d5fecc0b2636adbcbbd147d3495fc3fee274fe789dfc8997a282d720013e",
+    "tests/fixtures/identity-state-d.json": "2ae100498abc7c332d15b77cb70636f94df75a8f0c577bcfbac794b5f0b37421",
+    "tests/fixtures/identity-state-e.json": "07b72d7bd4364be8027426768ed9df947d8497f0a783f905e96a186355223dbe",
+    "tests/fixtures/migration-record-d.json": "73b2f48bd96dc15730efc1507543b1b3adf75552ec263a10279b376051d5d53e",
+    "tests/fixtures/migration-record-e.json": "0465ca49d3a4b7d6433214f33c43970478f8f0880ce791acf04c059a7251a6aa"
   }
 }

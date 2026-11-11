@@ -40,3 +40,19 @@ filename = "tests/fixtures/identity-state-b.json"
 [[test.validator.account]]
 address = "6VdajMuuCa29fiXNysyyjkFCbuhFJHHhpWXSvyZW9JnP"
 filename = "tests/fixtures/identity-state-c.json"
+
+[[test.validator.account]]
+address = "Hnevj4r58MKaDuMSJmgZrTctLhLC4jpSU8HkAgHviE6y"
+filename = "tests/fixtures/identity-state-d.json"
+
+[[test.validator.account]]
+address = "4qywCJ83UE8X19Qcm74xZfb45LeNEmJ8XSpqavcXzRzF"
+filename = "tests/fixtures/identity-state-e.json"
+
+[[test.validator.account]]
+address = "8svmyZguRZdzYtqi4P4eG7nkpactKUMJy4D2CmYr3aD8"
+filename = "tests/fixtures/migration-record-d.json"
+
+[[test.validator.account]]
+address = "7BrXUkXqB1ywZYKsHGFcndkS5orDB99PMgYE3YriAzJS"
+filename = "tests/fixtures/migration-record-e.json"

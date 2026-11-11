@@ -229,22 +229,46 @@ export function buildCreateVoterWeightRecordInstruction(
   };
 }
 
+export function deriveMigrationRecordPda(voterKey: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("migration"), voterKey.toBuffer()],
+    ENTROS_ANCHOR_PROGRAM_ID
+  )[0];
+}
+
+/** Accounts the plugin reads after the identity. Tests override them to exercise refusals. */
+export interface VoterEvidenceOverrides {
+  /** Defaults to the voter's migration record address. `null` leaves it out. */
+  migrationRecord?: PublicKey | null;
+  /** Defaults to the action target for a vote. `null` leaves it out. */
+  proposal?: PublicKey | null;
+}
+
 export function buildUpdateVoterWeightRecordInstruction(
   registrarPda: PublicKey,
   vwrPda: PublicKey,
   voterKey: PublicKey,
-  identityPda: PublicKey
+  identityPda: PublicKey,
+  overrides: VoterEvidenceOverrides = {}
 ): TransactionInstruction {
   const disc = anchorDiscriminator("update_voter_weight_record");
+  const keys = [
+    { pubkey: registrarPda, isSigner: false, isWritable: false },
+    { pubkey: vwrPda, isSigner: false, isWritable: true },
+    { pubkey: voterKey, isSigner: true, isWritable: false },
+    { pubkey: identityPda, isSigner: false, isWritable: false },
+  ];
+  const migrationRecord =
+    overrides.migrationRecord === undefined
+      ? deriveMigrationRecordPda(voterKey)
+      : overrides.migrationRecord;
+  if (migrationRecord) {
+    keys.push({ pubkey: migrationRecord, isSigner: false, isWritable: false });
+  }
 
   return new TransactionInstruction({
     programId: PLUGIN_PROGRAM_ID,
-    keys: [
-      { pubkey: registrarPda, isSigner: false, isWritable: false },
-      { pubkey: vwrPda, isSigner: false, isWritable: true },
-      { pubkey: voterKey, isSigner: true, isWritable: false },
-      { pubkey: identityPda, isSigner: false, isWritable: false },
-    ],
+    keys,
     data: disc,
   });
 }
@@ -263,7 +287,8 @@ export function buildUpdateVoterWeightRecordForActionInstruction(
   voterKey: PublicKey,
   identityPda: PublicKey,
   weightAction: VoterWeightActionTag,
-  weightActionTarget: PublicKey
+  weightActionTarget: PublicKey,
+  overrides: VoterEvidenceOverrides = {}
 ): TransactionInstruction {
   const disc = anchorDiscriminator("update_voter_weight_record_for_action");
   const data = Buffer.alloc(8 + 1 + 32);
@@ -271,14 +296,31 @@ export function buildUpdateVoterWeightRecordForActionInstruction(
   data.writeUInt8(weightAction, 8);
   weightActionTarget.toBuffer().copy(data, 9);
 
+  const keys = [
+    { pubkey: registrarPda, isSigner: false, isWritable: false },
+    { pubkey: vwrPda, isSigner: false, isWritable: true },
+    { pubkey: voterKey, isSigner: true, isWritable: false },
+    { pubkey: identityPda, isSigner: false, isWritable: false },
+  ];
+  // A vote also carries the voter's migration record and the proposal.
+  if (weightAction === VoterWeightActionTag.CastVote) {
+    const migrationRecord =
+      overrides.migrationRecord === undefined
+        ? deriveMigrationRecordPda(voterKey)
+        : overrides.migrationRecord;
+    if (migrationRecord) {
+      keys.push({ pubkey: migrationRecord, isSigner: false, isWritable: false });
+    }
+    const proposal =
+      overrides.proposal === undefined ? weightActionTarget : overrides.proposal;
+    if (proposal) {
+      keys.push({ pubkey: proposal, isSigner: false, isWritable: false });
+    }
+  }
+
   return new TransactionInstruction({
     programId: PLUGIN_PROGRAM_ID,
-    keys: [
-      { pubkey: registrarPda, isSigner: false, isWritable: false },
-      { pubkey: vwrPda, isSigner: false, isWritable: true },
-      { pubkey: voterKey, isSigner: true, isWritable: false },
-      { pubkey: identityPda, isSigner: false, isWritable: false },
-    ],
+    keys,
     data,
   });
 }
@@ -394,6 +436,165 @@ export function buildCreateGovernanceInstruction(
       data: Buffer.concat(parts),
     }),
     governancePda,
+  };
+}
+
+// ---- spl-governance CreateProposal, SignOffProposal & CastVote ----
+
+function borshString(value: string): Buffer {
+  const bytes = Buffer.from(value, "utf8");
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(bytes.length);
+  return Buffer.concat([length, bytes]);
+}
+
+function realmConfigPda(realmPda: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("realm-config"), realmPda.toBuffer()],
+    GOVERNANCE_PROGRAM_ID
+  )[0];
+}
+
+/** A single-choice proposal with one option and a deny option. */
+export function buildCreateProposalInstruction(
+  realmPda: PublicKey,
+  governancePda: PublicKey,
+  proposalOwnerRecordPda: PublicKey,
+  governingTokenMint: PublicKey,
+  governanceAuthority: PublicKey,
+  payerKey: PublicKey,
+  proposalSeed: PublicKey,
+  voterWeightRecordPda: PublicKey,
+  name: string
+): { instruction: TransactionInstruction; proposalPda: PublicKey } {
+  const [proposalPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("governance"),
+      governancePda.toBuffer(),
+      governingTokenMint.toBuffer(),
+      proposalSeed.toBuffer(),
+    ],
+    GOVERNANCE_PROGRAM_ID
+  );
+  const [proposalDepositPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("proposal-deposit"),
+      proposalPda.toBuffer(),
+      payerKey.toBuffer(),
+    ],
+    GOVERNANCE_PROGRAM_ID
+  );
+
+  const optionCount = Buffer.alloc(4);
+  optionCount.writeUInt32LE(1);
+  // GovernanceInstruction::CreateProposal = 6
+  const data = Buffer.concat([
+    Buffer.from([6]),
+    borshString(name),
+    borshString(""), // description_link
+    Buffer.from([0]), // vote_type: SingleChoice
+    optionCount,
+    borshString("Approve"),
+    Buffer.from([1]), // use_deny_option
+    proposalSeed.toBuffer(),
+  ]);
+
+  return {
+    instruction: new TransactionInstruction({
+      programId: GOVERNANCE_PROGRAM_ID,
+      keys: [
+        { pubkey: realmPda, isSigner: false, isWritable: false },
+        { pubkey: proposalPda, isSigner: false, isWritable: true },
+        { pubkey: governancePda, isSigner: false, isWritable: true },
+        { pubkey: proposalOwnerRecordPda, isSigner: false, isWritable: true },
+        { pubkey: governingTokenMint, isSigner: false, isWritable: false },
+        { pubkey: governanceAuthority, isSigner: true, isWritable: false },
+        { pubkey: payerKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: realmConfigPda(realmPda), isSigner: false, isWritable: false },
+        { pubkey: voterWeightRecordPda, isSigner: false, isWritable: false },
+        { pubkey: proposalDepositPda, isSigner: false, isWritable: true },
+      ],
+      data,
+    }),
+    proposalPda,
+  };
+}
+
+/** The proposal owner signs off, which starts voting. */
+export function buildSignOffProposalInstruction(
+  realmPda: PublicKey,
+  governancePda: PublicKey,
+  proposalPda: PublicKey,
+  proposalOwner: PublicKey,
+  proposalOwnerRecordPda: PublicKey
+): TransactionInstruction {
+  // GovernanceInstruction::SignOffProposal = 12
+  return new TransactionInstruction({
+    programId: GOVERNANCE_PROGRAM_ID,
+    keys: [
+      { pubkey: realmPda, isSigner: false, isWritable: false },
+      { pubkey: governancePda, isSigner: false, isWritable: false },
+      { pubkey: proposalPda, isSigner: false, isWritable: true },
+      { pubkey: proposalOwner, isSigner: true, isWritable: false },
+      { pubkey: proposalOwnerRecordPda, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([12]),
+  });
+}
+
+/** An approve vote with the voter's full weight on the single option. */
+export function buildCastVoteInstruction(
+  realmPda: PublicKey,
+  governancePda: PublicKey,
+  proposalPda: PublicKey,
+  proposalOwnerRecordPda: PublicKey,
+  voterTokenOwnerRecordPda: PublicKey,
+  governanceAuthority: PublicKey,
+  governingTokenMint: PublicKey,
+  payerKey: PublicKey,
+  voterWeightRecordPda: PublicKey
+): { instruction: TransactionInstruction; voteRecordPda: PublicKey } {
+  const [voteRecordPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("governance"),
+      proposalPda.toBuffer(),
+      voterTokenOwnerRecordPda.toBuffer(),
+    ],
+    GOVERNANCE_PROGRAM_ID
+  );
+
+  const choiceCount = Buffer.alloc(4);
+  choiceCount.writeUInt32LE(1);
+  // GovernanceInstruction::CastVote = 13, Vote::Approve = 0,
+  // VoteChoice { rank: 0, weight_percentage: 100 }
+  const data = Buffer.concat([
+    Buffer.from([13]),
+    Buffer.from([0]),
+    choiceCount,
+    Buffer.from([0, 100]),
+  ]);
+
+  return {
+    instruction: new TransactionInstruction({
+      programId: GOVERNANCE_PROGRAM_ID,
+      keys: [
+        { pubkey: realmPda, isSigner: false, isWritable: false },
+        { pubkey: governancePda, isSigner: false, isWritable: true },
+        { pubkey: proposalPda, isSigner: false, isWritable: true },
+        { pubkey: proposalOwnerRecordPda, isSigner: false, isWritable: true },
+        { pubkey: voterTokenOwnerRecordPda, isSigner: false, isWritable: true },
+        { pubkey: governanceAuthority, isSigner: true, isWritable: false },
+        { pubkey: voteRecordPda, isSigner: false, isWritable: true },
+        { pubkey: governingTokenMint, isSigner: false, isWritable: false },
+        { pubkey: payerKey, isSigner: true, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: realmConfigPda(realmPda), isSigner: false, isWritable: false },
+        { pubkey: voterWeightRecordPda, isSigner: false, isWritable: false },
+      ],
+      data,
+    }),
+    voteRecordPda,
   };
 }
 
