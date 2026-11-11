@@ -10,7 +10,9 @@ A voter creates a `VoterWeightRecord` for their wallet. Before a governance acti
 
 The update reads the wallet's Entros `IdentityState` account. It checks the account owner, discriminator, wallet binding, Trust Score, and verification recency.
 
-An eligible standalone `update_voter_weight_record` writes binary voter weight `1` with a 10-slot expiry. An eligible action-bound `update_voter_weight_record_for_action` writes voter weight `1` with a current-slot expiry (`Some(clock.slot)`) and binds `weight_action` and `weight_action_target` for same-transaction settlement. An ineligible update returns an error and writes no zero-weight record.
+An eligible standalone `update_voter_weight_record` writes binary voter weight `1` with a current-slot expiry. An eligible action-bound `update_voter_weight_record_for_action` writes voter weight `1` with a current-slot expiry (`Some(clock.slot)`) and binds `weight_action` and `weight_action_target` for same-transaction settlement. An ineligible update returns an error and writes no zero-weight record.
+
+A standalone update and a vote update also read the voter's migration record. A wallet that received a migrated identity votes only on a proposal that entered voting after the identity arrived, and it uses the action-bound update. The README lists the accounts for each update.
 
 The program does not run behavioral checks. It trusts the Anchor state produced by the wider Entros verification flow.
 
@@ -36,7 +38,7 @@ The planned Realms client will:
 
 1. Derive the registrar and voter-weight record addresses.
 2. Create missing voter-weight records.
-3. Add `update_voter_weight_record_for_action` (or `update_voter_weight_record`) before the governance action.
+3. Add `update_voter_weight_record_for_action` (or `update_voter_weight_record`) before the governance action, in the same transaction.
 4. Surface eligibility errors before wallet approval.
 5. Derive its cluster from the active connection.
 6. Register with the supported Realms UI plugin interface.
