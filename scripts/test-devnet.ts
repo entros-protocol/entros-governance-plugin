@@ -1,259 +1,188 @@
 /**
- * End-to-end devnet test for the Entros voter weight plugin.
+ * End-to-end devnet verification script for the Entros voter weight plugin.
  *
- * 1. Creates an SPL token mint
- * 2. Creates a Realms DAO with the Entros plugin as voter weight addin
- * 3. Calls create_registrar on the Entros voter weight plugin
- * 4. Calls create_voter_weight_record for the test voter
- * 5. Calls update_voter_weight_record with the voter's Entros IdentityState
- * 6. Reads the VoterWeightRecord and verifies voter_weight = 1
+ * Full devnet mode (default, requires funded devnet keypair with an IdentityState):
+ * 1. Reads IdentityState and optional MigrationRecord for the payer wallet
+ * 2. Creates a community SPL token mint (supply 100) and Realms DAO with the plugin addin
+ * 3. Creates the Registrar, TokenOwnerRecord, and Governance
+ * 4. Runs preflightVoterEligibility and executes an atomic cold-voter CreateProposal
+ *    transaction ([create_voter_weight_record, update_voter_weight_record_for_action, CreateProposal])
+ * 5. Signs off the proposal, runs CastVote pre-flight (including MigrationRecord and
+ *    Proposal.voting_at_slot checks), and executes an atomic warm-voter CastVote transaction
+ * 6. For non-migrated wallets, also exercises standalone update_voter_weight_record
  *
- * Prerequisites:
- * - Entros voter weight plugin deployed to devnet
- * - Wallet has an Entros IdentityState on devnet (verified via entros.io)
- * - Solana CLI configured for devnet with a funded keypair
- *
- * Usage: npm run test:devnet
+ * Read-safe pre-flight mode (zero transactions, zero SOL spent):
+ *   PREFLIGHT_ONLY=1 REALM=<realm> MINT=<mint> [VOTER=<pubkey>] [PROPOSAL=<proposal>] npm run test:devnet
+ *   or: npm run test:devnet -- --preflight-only
  */
 
 import {
   Connection,
   Keypair,
   PublicKey,
-  Transaction,
-  TransactionInstruction,
   SystemProgram,
+  Transaction,
   sendAndConfirmTransaction,
-  SYSVAR_RENT_PUBKEY,
 } from "@solana/web3.js";
 import {
-  createInitializeMintInstruction,
-  TOKEN_PROGRAM_ID,
   MINT_SIZE,
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountInstruction,
+  createInitializeMintInstruction,
+  createMintToInstruction,
+  getAssociatedTokenAddressSync,
   getMinimumBalanceForRentExemptMint,
 } from "@solana/spl-token";
 import * as fs from "fs";
 import * as path from "path";
-import * as crypto from "crypto";
+import {
+  ENTROS_ANCHOR_PROGRAM_ID,
+  GOVERNANCE_PROGRAM_ID,
+  PLUGIN_PROGRAM_ID,
+  VoterWeightActionTag,
+  buildCastVoteInstruction,
+  buildCreateGovernanceInstruction,
+  buildCreateProposalInstruction,
+  buildCreateRealmInstruction,
+  buildCreateRegistrarInstruction,
+  buildCreateTokenOwnerRecordInstruction,
+  buildSignOffProposalInstruction,
+  buildUpdateVoterWeightRecordInstruction,
+} from "../tests/helpers";
+import {
+  buildAtomicGovernanceTransaction,
+  deriveIdentityStatePda,
+  deriveMigrationRecordPda,
+  parseIdentityStateAccount,
+  parseMigrationRecordAccount,
+  parseVoterWeightRecordAccount,
+  preflightVoterEligibility,
+} from "../tests/realms-consumer-client";
 
-// Program IDs
-const GOVERNANCE_PROGRAM_ID = new PublicKey("GovER5Lthms3bLBqWub97yVrMmEogzX7xNjdXpPPCVZw");
-const PLUGIN_PROGRAM_ID = new PublicKey("99nwXzcugse3x8kxE9v6mxZiq8T9gHDoznaaG6qcw534");
-const ENTROS_ANCHOR_PROGRAM_ID = new PublicKey("GZYwTp2ozeuRA5Gof9vs4ya961aANcJBdUzB7LN6q4b2");
+const RPC_URL = process.env.RPC_URL || "https://api.devnet.solana.com";
+const connection = new Connection(RPC_URL, "confirmed");
 
-// Load keypair
-const keypairPath = process.env.KEYPAIR_PATH || path.resolve(__dirname, "../../.config/devnet-authority.json");
-if (!fs.existsSync(keypairPath)) {
-  console.error(`Keypair not found at ${keypairPath}. Set KEYPAIR_PATH or create the file.`);
-  process.exit(1);
+function loadKeypair(): Keypair {
+  const keypairPath =
+    process.env.KEYPAIR_PATH ||
+    path.resolve(__dirname, "../../.config/devnet-authority.json");
+  if (!fs.existsSync(keypairPath)) {
+    console.error(
+      `Keypair not found at ${keypairPath}. Set KEYPAIR_PATH or create the file.`
+    );
+    process.exit(1);
+  }
+  return Keypair.fromSecretKey(
+    Uint8Array.from(JSON.parse(fs.readFileSync(keypairPath, "utf-8")))
+  );
 }
-const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(keypairPath, "utf-8"))));
-const connection = new Connection("https://api.devnet.solana.com", "confirmed");
 
-// Plugin instruction discriminators (Anchor: sha256("global:<instruction_name>")[0..8])
-function anchorDiscriminator(name: string): Buffer {
-  return crypto.createHash("sha256").update(`global:${name}`).digest().slice(0, 8);
+function parseActionEnv(raw: string | undefined): VoterWeightActionTag | null {
+  if (!raw) {
+    return null;
+  }
+  const normalized = raw.trim().toLowerCase();
+  switch (normalized) {
+    case "castvote":
+    case "cast_vote":
+      return VoterWeightActionTag.CastVote;
+    case "commentproposal":
+    case "comment_proposal":
+      return VoterWeightActionTag.CommentProposal;
+    case "creategovernance":
+    case "create_governance":
+      return VoterWeightActionTag.CreateGovernance;
+    case "createproposal":
+    case "create_proposal":
+      return VoterWeightActionTag.CreateProposal;
+    case "signoffproposal":
+    case "sign_off_proposal":
+      return VoterWeightActionTag.SignOffProposal;
+    case "standalone":
+    case "none":
+      return null;
+    default:
+      throw new Error(`Unsupported ACTION value: ${raw}`);
+  }
 }
 
-// ---- spl-governance CreateRealm instruction builder ----
-
-function buildCreateRealmInstruction(
-  realmName: string,
-  realmAuthority: PublicKey,
-  communityMint: PublicKey,
-  payerKey: PublicKey,
-  voterWeightAddin: PublicKey | null,
-): { instruction: TransactionInstruction; realmPda: PublicKey } {
-  const [realmPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("governance"), Buffer.from(realmName)],
-    GOVERNANCE_PROGRAM_ID,
-  );
-  const [communityHolding] = PublicKey.findProgramAddressSync(
-    [Buffer.from("governance"), realmPda.toBuffer(), communityMint.toBuffer()],
-    GOVERNANCE_PROGRAM_ID,
-  );
-  const [realmConfig] = PublicKey.findProgramAddressSync(
-    [Buffer.from("realm-config"), realmPda.toBuffer()],
-    GOVERNANCE_PROGRAM_ID,
-  );
-
-  const accounts = [
-    { pubkey: realmPda, isSigner: false, isWritable: true },
-    { pubkey: realmAuthority, isSigner: false, isWritable: false },
-    { pubkey: communityMint, isSigner: false, isWritable: false },
-    { pubkey: communityHolding, isSigner: false, isWritable: true },
-    { pubkey: payerKey, isSigner: true, isWritable: true },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
-    { pubkey: SYSVAR_RENT_PUBKEY, isSigner: false, isWritable: false },
-    // No council mint -- skip council accounts entirely (not PublicKey.default)
-    // RealmConfig comes right after rent when no council
-    { pubkey: realmConfig, isSigner: false, isWritable: true },
-  ];
-
-  // Add voter weight addin if provided
-  if (voterWeightAddin) {
-    accounts.push({ pubkey: voterWeightAddin, isSigner: false, isWritable: false });
+async function runPreflightOnly(): Promise<void> {
+  const realmRaw = process.env.REALM;
+  const mintRaw = process.env.MINT;
+  if (!realmRaw || !mintRaw) {
+    console.error(
+      "PREFLIGHT_ONLY requires REALM and MINT environment variables."
+    );
+    process.exit(1);
   }
 
-  // Serialize instruction data
-  const nameBytes = Buffer.from(realmName, "utf-8");
-  const parts: Buffer[] = [];
+  const realm = new PublicKey(realmRaw);
+  const governingTokenMint = new PublicKey(mintRaw);
+  const voter = process.env.VOTER
+    ? new PublicKey(process.env.VOTER)
+    : loadKeypair().publicKey;
+  const proposalRaw = process.env.PROPOSAL;
+  const actionTargetRaw = process.env.ACTION_TARGET ?? proposalRaw;
+  const action =
+    process.env.ACTION !== undefined
+      ? parseActionEnv(process.env.ACTION)
+      : proposalRaw
+        ? VoterWeightActionTag.CastVote
+        : null;
+  const actionTarget = actionTargetRaw ? new PublicKey(actionTargetRaw) : null;
 
-  // Instruction index: 0 (CreateRealm)
-  parts.push(Buffer.from([0]));
-
-  // name: Borsh String
-  const nameLen = Buffer.alloc(4);
-  nameLen.writeUInt32LE(nameBytes.length);
-  parts.push(nameLen);
-  parts.push(nameBytes);
-
-  // RealmConfigArgs:
-  // use_council_mint: false
-  parts.push(Buffer.from([0]));
-
-  // min_community_weight_to_create_governance: u64 = 1
-  const minWeight = Buffer.alloc(8);
-  minWeight.writeBigUInt64LE(1n);
-  parts.push(minWeight);
-
-  // community_mint_max_voter_weight_source: SupplyFraction(10_000_000_000)
-  parts.push(Buffer.from([0])); // SupplyFraction variant
-  const fraction = Buffer.alloc(8);
-  fraction.writeBigUInt64LE(10_000_000_000n); // 100%
-  parts.push(fraction);
-
-  // community_token_config_args:
-  parts.push(Buffer.from([voterWeightAddin ? 1 : 0])); // use_voter_weight_addin
-  parts.push(Buffer.from([0])); // use_max_voter_weight_addin
-  parts.push(Buffer.from([0])); // token_type = Liquid
-
-  // council_token_config_args:
-  parts.push(Buffer.from([0])); // use_voter_weight_addin
-  parts.push(Buffer.from([0])); // use_max_voter_weight_addin
-  parts.push(Buffer.from([2])); // token_type = Dormant
-
-  return {
-    instruction: new TransactionInstruction({
-      programId: GOVERNANCE_PROGRAM_ID,
-      keys: accounts,
-      data: Buffer.concat(parts),
-    }),
-    realmPda,
-  };
-}
-
-// ---- Plugin instruction builders ----
-
-function buildCreateRegistrarInstruction(
-  realmPda: PublicKey,
-  communityMint: PublicKey,
-  realmAuthority: PublicKey,
-  payerKey: PublicKey,
-  minTrustScore: number,
-  maxVerificationAge: bigint,
-): { instruction: TransactionInstruction; registrarPda: PublicKey } {
-  const [registrarPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("registrar"), realmPda.toBuffer(), communityMint.toBuffer()],
-    PLUGIN_PROGRAM_ID,
+  console.log("=== Entros Voter Weight Plugin: Read-Only Devnet Pre-Flight ===\n");
+  console.log("RPC:", RPC_URL);
+  console.log("Realm:", realm.toBase58());
+  console.log("Mint:", governingTokenMint.toBase58());
+  console.log("Voter:", voter.toBase58());
+  console.log(
+    "Mode:",
+    action === null
+      ? "standalone update_voter_weight_record"
+      : `action-bound (${VoterWeightActionTag[action]})`
   );
+  if (actionTarget) {
+    console.log("Action target:", actionTarget.toBase58());
+  }
 
-  const disc = anchorDiscriminator("create_registrar");
-  const data = Buffer.alloc(8 + 2 + 8);
-  disc.copy(data, 0);
-  data.writeUInt16LE(minTrustScore, 8);
-  data.writeBigInt64LE(maxVerificationAge, 10);
-
-  return {
-    instruction: new TransactionInstruction({
-      programId: PLUGIN_PROGRAM_ID,
-      keys: [
-        { pubkey: registrarPda, isSigner: false, isWritable: true },
-        { pubkey: GOVERNANCE_PROGRAM_ID, isSigner: false, isWritable: false },
-        { pubkey: realmPda, isSigner: false, isWritable: false },
-        { pubkey: communityMint, isSigner: false, isWritable: false },
-        { pubkey: realmAuthority, isSigner: true, isWritable: false },
-        { pubkey: payerKey, isSigner: true, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data,
-    }),
-    registrarPda,
-  };
-}
-
-function buildCreateVoterWeightRecordInstruction(
-  registrarPda: PublicKey,
-  realmPda: PublicKey,
-  communityMint: PublicKey,
-  voterKey: PublicKey,
-  payerKey: PublicKey,
-): { instruction: TransactionInstruction; vwrPda: PublicKey } {
-  const [vwrPda] = PublicKey.findProgramAddressSync(
-    [
-      Buffer.from("voter-weight-record"),
-      realmPda.toBuffer(),
-      communityMint.toBuffer(),
-      voterKey.toBuffer(),
-    ],
-    PLUGIN_PROGRAM_ID,
-  );
-
-  const disc = anchorDiscriminator("create_voter_weight_record");
-  const data = Buffer.alloc(8 + 32);
-  disc.copy(data, 0);
-  voterKey.toBuffer().copy(data, 8);
-
-  return {
-    instruction: new TransactionInstruction({
-      programId: PLUGIN_PROGRAM_ID,
-      keys: [
-        { pubkey: registrarPda, isSigner: false, isWritable: false },
-        { pubkey: vwrPda, isSigner: false, isWritable: true },
-        { pubkey: voterKey, isSigner: true, isWritable: false },
-        { pubkey: payerKey, isSigner: true, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data,
-    }),
-    vwrPda,
-  };
-}
-
-function buildUpdateVoterWeightRecordInstruction(
-  registrarPda: PublicKey,
-  vwrPda: PublicKey,
-  voterKey: PublicKey,
-  identityPda: PublicKey,
-): TransactionInstruction {
-  const disc = anchorDiscriminator("update_voter_weight_record");
-  // The account exists only for a wallet that received a migrated identity.
-  // The program needs its address either way.
-  const [migrationRecordPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("migration"), voterKey.toBuffer()],
-    ENTROS_ANCHOR_PROGRAM_ID,
-  );
-
-  return new TransactionInstruction({
-    programId: PLUGIN_PROGRAM_ID,
-    keys: [
-      { pubkey: registrarPda, isSigner: false, isWritable: false },
-      { pubkey: vwrPda, isSigner: false, isWritable: true },
-      { pubkey: voterKey, isSigner: true, isWritable: false },
-      // remaining_accounts[0] = Entros IdentityState PDA
-      { pubkey: identityPda, isSigner: false, isWritable: false },
-      // remaining_accounts[1] = Entros MigrationRecord PDA for the voter
-      { pubkey: migrationRecordPda, isSigner: false, isWritable: false },
-    ],
-    data: disc,
+  const result = await preflightVoterEligibility({
+    connection,
+    realm,
+    governingTokenMint,
+    voter,
+    governanceProgramId: GOVERNANCE_PROGRAM_ID,
+    action,
+    actionTarget,
   });
+
+  if (!result.eligible) {
+    console.error("\nINELIGIBLE:", result.reason);
+    console.error("Message:", result.message);
+    process.exit(1);
+  }
+
+  console.log("\nELIGIBLE");
+  console.log("Needs create_voter_weight_record:", result.needsCreateVwr);
+  console.log("Trust Score:", result.trustScore);
+  console.log(
+    "Last Verified:",
+    new Date(Number(result.lastVerificationTimestamp) * 1000).toISOString()
+  );
+  console.log(
+    "Migration Slot:",
+    result.migratedSlot !== null ? result.migratedSlot.toString() : "none"
+  );
+  if (result.votingAtSlot !== null) {
+    console.log("Proposal Voting Start Slot:", result.votingAtSlot.toString());
+  }
 }
 
-// ---- Main ----
+async function runFullDevnetFlow(): Promise<void> {
+  const payer = loadKeypair();
 
-async function main() {
   console.log("=== Entros Voter Weight Plugin: End-to-End Devnet Test ===\n");
+  console.log("RPC:", RPC_URL);
   console.log("Payer:", payer.publicKey.toBase58());
 
   const balance = await connection.getBalance(payer.publicKey);
@@ -264,27 +193,57 @@ async function main() {
     process.exit(1);
   }
 
-  // 1. Check Entros IdentityState exists
-  const [identityPda] = PublicKey.findProgramAddressSync(
-    [Buffer.from("identity"), payer.publicKey.toBuffer()],
-    ENTROS_ANCHOR_PROGRAM_ID,
-  );
+  // 1. Check Entros IdentityState and MigrationRecord
+  const identityPda = deriveIdentityStatePda(payer.publicKey);
+  const migrationRecordPda = deriveMigrationRecordPda(payer.publicKey);
 
-  const identityAccount = await connection.getAccountInfo(identityPda);
+  const [identityAccount, migrationAccount] =
+    await connection.getMultipleAccountsInfo([identityPda, migrationRecordPda]);
   if (!identityAccount) {
-    console.error("No Entros IdentityState found. Verify at entros.io/verify first.");
+    console.error(
+      "No Entros IdentityState found. Verify at entros.io/verify first."
+    );
+    process.exit(1);
+  }
+  const identity = parseIdentityStateAccount(identityAccount.data);
+  if (!identity) {
+    console.error("IdentityState account data failed validation.");
     process.exit(1);
   }
 
-  const trustScore = identityAccount.data.readUInt16LE(60);
-  const lastVerif = Number(identityAccount.data.readBigInt64LE(48));
-  console.log("Entros Trust Score:", trustScore);
-  console.log("Last Verified:", new Date(lastVerif * 1000).toISOString());
+  let migratedSlot: bigint | null = null;
+  if (
+    migrationAccount &&
+    migrationAccount.owner.equals(ENTROS_ANCHOR_PROGRAM_ID)
+  ) {
+    const parsedMigration = parseMigrationRecordAccount(migrationAccount.data);
+    if (!parsedMigration) {
+      console.error("MigrationRecord account data failed validation.");
+      process.exit(1);
+    }
+    migratedSlot = parsedMigration.migratedSlot;
+  }
 
-  // 2. Create SPL token mint (community token)
+  console.log("Entros Trust Score:", identity.trustScore);
+  console.log(
+    "Last Verified:",
+    new Date(Number(identity.lastVerificationTimestamp) * 1000).toISOString()
+  );
+  console.log(
+    "MigrationRecord:",
+    migratedSlot !== null
+      ? `${migrationRecordPda.toBase58()} (slot ${migratedSlot.toString()})`
+      : "none"
+  );
+
+  // 2. Create SPL token mint with supply 100 so a single vote keeps the proposal in Voting
   console.log("\n--- Step 1: Create community token mint ---");
   const mintKeypair = Keypair.generate();
   const mintRent = await getMinimumBalanceForRentExemptMint(connection);
+  const supplyAta = getAssociatedTokenAddressSync(
+    mintKeypair.publicKey,
+    payer.publicKey
+  );
 
   const createMintTx = new Transaction().add(
     SystemProgram.createAccount({
@@ -296,123 +255,294 @@ async function main() {
     }),
     createInitializeMintInstruction(
       mintKeypair.publicKey,
-      0, // decimals
-      payer.publicKey, // mint authority
-      null, // freeze authority
+      0,
+      payer.publicKey,
+      null
     ),
+    createAssociatedTokenAccountInstruction(
+      payer.publicKey,
+      supplyAta,
+      payer.publicKey,
+      mintKeypair.publicKey
+    ),
+    createMintToInstruction(
+      mintKeypair.publicKey,
+      supplyAta,
+      payer.publicKey,
+      100
+    )
   );
-
-  await sendAndConfirmTransaction(connection, createMintTx, [payer, mintKeypair]);
+  await sendAndConfirmTransaction(connection, createMintTx, [
+    payer,
+    mintKeypair,
+  ]);
   console.log("Community mint:", mintKeypair.publicKey.toBase58());
 
   // 3. Create Realm with Entros plugin as voter weight addin
   console.log("\n--- Step 2: Create Realms DAO ---");
   const realmName = `Entros-Test-${Date.now().toString(36)}`;
-
   const { instruction: createRealmIx, realmPda } = buildCreateRealmInstruction(
     realmName,
-    payer.publicKey, // realm authority = payer
+    payer.publicKey,
     mintKeypair.publicKey,
     payer.publicKey,
-    PLUGIN_PROGRAM_ID, // voter weight addin
+    PLUGIN_PROGRAM_ID
   );
-
-  const createRealmTx = new Transaction().add(createRealmIx);
-  const realmSig = await sendAndConfirmTransaction(connection, createRealmTx, [payer]);
+  const realmSig = await sendAndConfirmTransaction(
+    connection,
+    new Transaction().add(createRealmIx),
+    [payer]
+  );
   console.log("Realm:", realmPda.toBase58());
   console.log("Realm name:", realmName);
   console.log("Tx:", realmSig);
 
-  // 4. Create Registrar
-  console.log("\n--- Step 3: Create Registrar ---");
-  const { instruction: createRegistrarIx, registrarPda } = buildCreateRegistrarInstruction(
-    realmPda,
-    mintKeypair.publicKey,
-    payer.publicKey,
-    payer.publicKey,
-    100, // min_trust_score = 100 (requires at least one re-verification)
-    2592000n, // max_verification_age = 30 days
-  );
+  // 4. Create Registrar, TokenOwnerRecord, and Governance
+  console.log("\n--- Step 3: Create Registrar, TokenOwnerRecord, and Governance ---");
+  const { instruction: createRegistrarIx, registrarPda } =
+    buildCreateRegistrarInstruction(
+      realmPda,
+      mintKeypair.publicKey,
+      payer.publicKey,
+      payer.publicKey,
+      100,
+      2_592_000n
+    );
+  const { instruction: createTorIx, tokenOwnerRecordPda } =
+    buildCreateTokenOwnerRecordInstruction(
+      realmPda,
+      payer.publicKey,
+      mintKeypair.publicKey,
+      payer.publicKey
+    );
+  const { instruction: createGovIx, governancePda } =
+    buildCreateGovernanceInstruction(
+      realmPda,
+      Keypair.generate().publicKey,
+      tokenOwnerRecordPda,
+      payer.publicKey,
+      payer.publicKey
+    );
 
-  const registrarTx = new Transaction().add(createRegistrarIx);
-  const registrarSig = await sendAndConfirmTransaction(connection, registrarTx, [payer]);
+  const setupSig = await sendAndConfirmTransaction(
+    connection,
+    new Transaction().add(createRegistrarIx, createTorIx, createGovIx),
+    [payer]
+  );
   console.log("Registrar:", registrarPda.toBase58());
-  console.log("Min Trust Score: 100");
-  console.log("Max Verification Age: 30 days");
-  console.log("Tx:", registrarSig);
+  console.log("Governance:", governancePda.toBase58());
+  console.log("Tx:", setupSig);
 
-  // 5. Create VoterWeightRecord
-  console.log("\n--- Step 4: Create VoterWeightRecord ---");
-  const { instruction: createVwrIx, vwrPda } = buildCreateVoterWeightRecordInstruction(
-    registrarPda,
+  // 5. Cold voter pre-flight + atomic CreateProposal (creates VWR + action-bound update + proposal)
+  console.log("\n--- Step 4: Atomic cold-voter CreateProposal ---");
+  const proposalPreflight = await preflightVoterEligibility({
+    connection,
+    realm: realmPda,
+    governingTokenMint: mintKeypair.publicKey,
+    voter: payer.publicKey,
+    governanceProgramId: GOVERNANCE_PROGRAM_ID,
+    action: VoterWeightActionTag.CreateProposal,
+    actionTarget: governancePda,
+  });
+  if (!proposalPreflight.eligible) {
+    console.error(
+      `Pre-flight refused CreateProposal (${proposalPreflight.reason}): ${proposalPreflight.message}`
+    );
+    process.exit(1);
+  }
+
+  const createProposal = buildCreateProposalInstruction(
     realmPda,
+    governancePda,
+    tokenOwnerRecordPda,
     mintKeypair.publicKey,
     payer.publicKey,
     payer.publicKey,
+    Keypair.generate().publicKey,
+    proposalPreflight.pdas.voterWeightRecord,
+    "Entros Devnet Verification Proposal"
   );
+  const coldBuilt = buildAtomicGovernanceTransaction({
+    realm: realmPda,
+    governingTokenMint: mintKeypair.publicKey,
+    voter: payer.publicKey,
+    needsCreateVwr: proposalPreflight.needsCreateVwr,
+    action: VoterWeightActionTag.CreateProposal,
+    actionTarget: governancePda,
+    governanceInstructions: createProposal.instruction,
+  });
 
-  const vwrTx = new Transaction().add(createVwrIx);
-  const vwrSig = await sendAndConfirmTransaction(connection, vwrTx, [payer]);
-  console.log("VoterWeightRecord:", vwrPda.toBase58());
-  console.log("Tx:", vwrSig);
+  const proposalSig = await sendAndConfirmTransaction(
+    connection,
+    coldBuilt.transaction,
+    [payer]
+  );
+  console.log("VoterWeightRecord:", coldBuilt.pdas.voterWeightRecord.toBase58());
+  console.log("Proposal:", createProposal.proposalPda.toBase58());
+  console.log("Tx:", proposalSig);
 
-  // 6. Update VoterWeightRecord (the core test)
-  console.log("\n--- Step 5: Update VoterWeightRecord ---");
-  const updateIx = buildUpdateVoterWeightRecordInstruction(
-    registrarPda,
-    vwrPda,
+  // 6. Sign off proposal so it enters Voting state
+  console.log("\n--- Step 5: SignOffProposal ---");
+  const signOffSig = await sendAndConfirmTransaction(
+    connection,
+    new Transaction().add(
+      buildSignOffProposalInstruction(
+        realmPda,
+        governancePda,
+        createProposal.proposalPda,
+        payer.publicKey,
+        tokenOwnerRecordPda
+      )
+    ),
+    [payer]
+  );
+  console.log("Tx:", signOffSig);
+
+  // 7. Warm voter pre-flight + atomic CastVote (exercises MigrationRecord + Proposal.voting_at_slot)
+  console.log("\n--- Step 6: Atomic action-bound CastVote ---");
+  const votePreflight = await preflightVoterEligibility({
+    connection,
+    realm: realmPda,
+    governingTokenMint: mintKeypair.publicKey,
+    voter: payer.publicKey,
+    governanceProgramId: GOVERNANCE_PROGRAM_ID,
+    action: VoterWeightActionTag.CastVote,
+    actionTarget: createProposal.proposalPda,
+  });
+  if (!votePreflight.eligible) {
+    console.error(
+      `Pre-flight refused CastVote (${votePreflight.reason}): ${votePreflight.message}`
+    );
+    process.exit(1);
+  }
+
+  const castVote = buildCastVoteInstruction(
+    realmPda,
+    governancePda,
+    createProposal.proposalPda,
+    tokenOwnerRecordPda,
+    tokenOwnerRecordPda,
     payer.publicKey,
-    identityPda,
+    mintKeypair.publicKey,
+    payer.publicKey,
+    votePreflight.pdas.voterWeightRecord
   );
+  const warmBuilt = buildAtomicGovernanceTransaction({
+    realm: realmPda,
+    governingTokenMint: mintKeypair.publicKey,
+    voter: payer.publicKey,
+    needsCreateVwr: votePreflight.needsCreateVwr,
+    action: VoterWeightActionTag.CastVote,
+    actionTarget: createProposal.proposalPda,
+    governanceInstructions: castVote.instruction,
+  });
+  const voteSig = await sendAndConfirmTransaction(
+    connection,
+    warmBuilt.transaction,
+    [payer]
+  );
+  console.log("VoteRecord:", castVote.voteRecordPda.toBase58());
+  console.log("Tx:", voteSig);
 
-  const updateTx = new Transaction().add(updateIx);
-  const updateSig = await sendAndConfirmTransaction(connection, updateTx, [payer]);
-  console.log("Tx:", updateSig);
-
-  // 7. Read and verify the VoterWeightRecord
-  console.log("\n--- Step 6: Verify VoterWeightRecord ---");
-  const vwrAccount = await connection.getAccountInfo(vwrPda);
-  if (!vwrAccount) {
-    console.error("FAIL: VoterWeightRecord not found");
+  const actionVwrInfo = await connection.getAccountInfo(
+    warmBuilt.pdas.voterWeightRecord
+  );
+  const parsedActionVwr = actionVwrInfo
+    ? parseVoterWeightRecordAccount(actionVwrInfo.data)
+    : null;
+  if (
+    !parsedActionVwr ||
+    parsedActionVwr.voterWeight !== 1n ||
+    parsedActionVwr.voterWeightExpiry === null ||
+    parsedActionVwr.voterWeightExpiry <= 0n ||
+    parsedActionVwr.weightAction !== VoterWeightActionTag.CastVote ||
+    !parsedActionVwr.weightActionTarget?.equals(createProposal.proposalPda)
+  ) {
+    console.error("FAIL: Action-bound VoterWeightRecord verification failed.");
     process.exit(1);
   }
 
-  const vwrData = vwrAccount.data;
+  // 8. Standalone update_voter_weight_record check (only valid for non-migrated wallets)
+  console.log("\n--- Step 7: Standalone update_voter_weight_record check ---");
+  if (migratedSlot === null) {
+    const standaloneIx = buildUpdateVoterWeightRecordInstruction(
+      registrarPda,
+      warmBuilt.pdas.voterWeightRecord,
+      payer.publicKey,
+      identityPda
+    );
+    const standaloneSig = await sendAndConfirmTransaction(
+      connection,
+      new Transaction().add(standaloneIx),
+      [payer]
+    );
+    console.log("Standalone update tx:", standaloneSig);
 
-  // VoterWeightRecord layout (Borsh):
-  // 0-7: account_discriminator (8 bytes)
-  // 8-39: realm (32 bytes)
-  // 40-71: governing_token_mint (32 bytes)
-  // 72-103: governing_token_owner (32 bytes)
-  // 104-111: voter_weight (u64)
-  // 112: voter_weight_expiry Option tag
-  // 113-120: voter_weight_expiry value (u64) if Some
-
-  const voterWeight = vwrData.readBigUInt64LE(104);
-  const expiryTag = vwrData.readUInt8(112);
-  const expirySlot = expiryTag === 1 ? vwrData.readBigUInt64LE(113) : null;
-  const recordRealm = new PublicKey(vwrData.slice(8, 40));
-  const recordOwner = new PublicKey(vwrData.slice(72, 104));
-
-  console.log("Voter Weight:", voterWeight.toString());
-  console.log("Expiry Slot:", expirySlot?.toString() ?? "None");
-  console.log("Realm matches:", recordRealm.equals(realmPda) ? "YES" : "NO");
-  console.log("Owner matches:", recordOwner.equals(payer.publicKey) ? "YES" : "NO");
-
-  // Final verdict
-  console.log("\n=== RESULTS ===");
-  if (voterWeight === 1n && expirySlot !== null && expirySlot > 0n) {
-    console.log("PASS: Voter weight = 1, expiry set. Entros voter weight plugin works end-to-end.");
+    const standaloneVwrInfo = await connection.getAccountInfo(
+      warmBuilt.pdas.voterWeightRecord
+    );
+    const parsedStandalone = standaloneVwrInfo
+      ? parseVoterWeightRecordAccount(standaloneVwrInfo.data)
+      : null;
+    if (
+      !parsedStandalone ||
+      parsedStandalone.voterWeight !== 1n ||
+      parsedStandalone.voterWeightExpiry === null ||
+      parsedStandalone.voterWeightExpiry <= 0n ||
+      parsedStandalone.weightAction !== null ||
+      parsedStandalone.weightActionTarget !== null
+    ) {
+      console.error("FAIL: Standalone VoterWeightRecord verification failed.");
+      process.exit(1);
+    }
   } else {
-    console.log("FAIL: Unexpected voter weight or expiry.");
-    process.exit(1);
+    const standalonePreflight = await preflightVoterEligibility({
+      connection,
+      realm: realmPda,
+      governingTokenMint: mintKeypair.publicKey,
+      voter: payer.publicKey,
+      governanceProgramId: GOVERNANCE_PROGRAM_ID,
+      action: null,
+    });
+    console.log(
+      "Skipped standalone update for migrated wallet (pre-flight:",
+      standalonePreflight.eligible ? "unexpectedly eligible" : standalonePreflight.reason,
+      ")"
+    );
   }
+
+  console.log("\n=== RESULTS ===");
+  console.log(
+    "PASS: Action-bound CreateProposal, CastVote, and MigrationRecord checks succeeded end-to-end."
+  );
 
   console.log("\nExplorer links:");
-  console.log(`  Realm: https://explorer.solana.com/address/${realmPda.toBase58()}?cluster=devnet`);
-  console.log(`  Registrar: https://explorer.solana.com/address/${registrarPda.toBase58()}?cluster=devnet`);
-  console.log(`  VoterWeightRecord: https://explorer.solana.com/address/${vwrPda.toBase58()}?cluster=devnet`);
-  console.log(`  Plugin: https://explorer.solana.com/address/${PLUGIN_PROGRAM_ID.toBase58()}?cluster=devnet`);
+  console.log(
+    `  Realm: https://explorer.solana.com/address/${realmPda.toBase58()}?cluster=devnet`
+  );
+  console.log(
+    `  Registrar: https://explorer.solana.com/address/${registrarPda.toBase58()}?cluster=devnet`
+  );
+  console.log(
+    `  Proposal: https://explorer.solana.com/address/${createProposal.proposalPda.toBase58()}?cluster=devnet`
+  );
+  console.log(
+    `  VoterWeightRecord: https://explorer.solana.com/address/${warmBuilt.pdas.voterWeightRecord.toBase58()}?cluster=devnet`
+  );
+  console.log(
+    `  Plugin: https://explorer.solana.com/address/${PLUGIN_PROGRAM_ID.toBase58()}?cluster=devnet`
+  );
+}
+
+async function main(): Promise<void> {
+  const preflightOnly =
+    process.env.PREFLIGHT_ONLY === "1" ||
+    process.argv.includes("--preflight-only");
+  if (preflightOnly) {
+    await runPreflightOnly();
+    return;
+  }
+  await runFullDevnetFlow();
 }
 
 main().catch((err) => {

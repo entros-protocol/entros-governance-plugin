@@ -4,9 +4,9 @@ SPL Governance voter weight plugin for [Entros Protocol](https://entros.io).
 
 ## What it is
 
-This repository contains an on-chain voter-weight addin deployed on Solana devnet. It checks an Entros Anchor's Trust Score and verification recency.
+This repository contains an on-chain voter-weight addin deployed on Solana devnet. It checks an Entros Anchor's Trust Score and verification recency to grant one eligible wallet, one vote.
 
-Realms client registration, automatic transaction construction, and plugin chaining remain planned work. The current program is not a turnkey Realms UI integration.
+This repository also contains a TypeScript Realms consumer client (`tests/realms-consumer-client.ts`) and localnet harness (`tests/realms-consumer-harness.ts`). Realms UI registration and plugin chaining remain planned work. The current repository is not a turnkey Realms UI integration.
 
 ## Security boundary
 
@@ -20,23 +20,33 @@ See [`docs/REALMS-INTEGRATION-WALKTHROUGH.md`](docs/REALMS-INTEGRATION-WALKTHROU
 
 ## Where it fits
 
-The deployed program can produce binary voter weight for an eligible Entros Anchor. A future Realms client can compose that check into governance transactions.
+The deployed program produces binary voter weight (`1`) for an eligible Entros Anchor. The TypeScript consumer client checks eligibility off-chain and composes atomic governance transactions.
 
 Future chaining can combine Entros eligibility with another voter-weight source. The current registrar and update instruction do not accept a predecessor plugin record.
 
 ## How it works
 
-1. DAO admin calls `create_registrar` with a minimum Trust Score and maximum verification age
-2. Each voter calls `create_voter_weight_record` to initialize their record
-3. In the same transaction as the governance action, the voter calls an update instruction. It reads the voter's Entros IdentityState PDA cross-program and checks:
-   - Trust Score meets the DAO's configured floor
-   - The latest verification timestamp falls inside the DAO's configured window
-4. If both pass, the program sets `voter_weight` to `1`. The record expires with the current slot
-5. A future client can include the record update in a governance transaction
+1. DAO admin calls `create_registrar` with a minimum Trust Score and maximum verification age.
+2. Consumer client calls `preflightVoterEligibility` to verify `Registrar`, `VoterWeightRecord`, `IdentityState`, `MigrationRecord`, and proposal voting state before wallet signing.
+3. Consumer client calls `buildAtomicGovernanceTransaction` to bundle optional `create_voter_weight_record`, `update_voter_weight_record_for_action`, and the `spl-governance` instruction into one transaction.
+4. On-chain program validates Trust Score, verification recency, and migration rules, then writes `voter_weight = 1` with current-slot expiry (`Some(clock.slot)`).
+5. SPL Governance consumes the updated `VoterWeightRecord` in the same transaction.
 
 The update and the governance action share one transaction, because the record does not outlive its slot.
 
 Ineligible updates return an error. They do not write a zero-weight record.
+
+## Realms consumer client and harness
+
+`tests/realms-consumer-client.ts` exports PDA helpers, account parsers, `preflightVoterEligibility`, and `buildAtomicGovernanceTransaction` for SPL Governance consumers.
+
+`preflightVoterEligibility` reads `Registrar`, `VoterWeightRecord`, `IdentityState`, `MigrationRecord`, and `Proposal` accounts before requesting a wallet signature. For `CastVote`, it enforces strict `migratedSlot < votingAtSlot` against the proposal's `voting_at_slot`. It returns a typed eligibility result with `needsCreateVwr` or an explicit refusal reason.
+
+`buildAtomicGovernanceTransaction` prepends `create_voter_weight_record` when `VoterWeightRecord` is absent. It appends `update_voter_weight_record_for_action` with the required remaining accounts and the consuming `spl-governance` instruction in one atomic transaction.
+
+`tests/realms-consumer-harness.ts` tests the consumer client with unit checks and live localnet transactions against `spl_governance.so`, `entros_anchor.so`, and `entros_voter_weight.so`. It verifies cold and warm voters, pre-voting and post-voting migrations, stale or low-score refusals, action and target mismatches, and cross-slot expiry.
+
+`scripts/test-devnet.ts` runs the action-bound consumer flow on devnet and supports read-only `PREFLIGHT_ONLY=1` checks against an existing devnet Realm.
 
 ## One vote per identity
 
@@ -123,7 +133,7 @@ The localnet command loads the declared programs and account fixtures into an is
 
 Run `npm run fixtures:generate` only when the committed account fixtures need an intentional update. `npm run fixtures:verify` checks their hashes and reproducibility.
 
-70 tests: 10 Rust unit tests, 21 TypeScript unit tests and 39 integration tests.
+97 tests: 10 Rust unit tests, 38 TypeScript unit tests, and 49 integration tests.
 
 ## Dependencies
 
@@ -136,9 +146,9 @@ Run `npm run fixtures:generate` only when the committed account fixtures need an
 
 ## Realms integration status
 
-The on-chain addin is deployed on devnet. Normal Realms UI execution also needs a registered JS client that constructs the required transactions.
+The on-chain addin is deployed on devnet. `tests/realms-consumer-client.ts` provides standalone pre-flight checks and atomic transaction builders. `tests/realms-consumer-harness.ts` verifies both on localnet.
 
-That client is not present in this repository. Plugin chaining also requires registrar and instruction changes before it can ship.
+This repository does not register a Realms UI plugin. Plugin chaining also requires registrar and instruction changes before it can ship.
 
 ## Related
 
