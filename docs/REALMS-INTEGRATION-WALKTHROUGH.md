@@ -10,15 +10,25 @@ A voter creates a `VoterWeightRecord` for their wallet. Before a governance acti
 
 The update reads the wallet's Entros `IdentityState` account. It checks the account owner, discriminator, wallet binding, Trust Score, and verification recency.
 
-An eligible standalone `update_voter_weight_record` writes binary voter weight `1` with a current-slot expiry. An eligible action-bound `update_voter_weight_record_for_action` writes voter weight `1` with a current-slot expiry (`Some(clock.slot)`) and binds `weight_action` and `weight_action_target` for same-transaction settlement. An ineligible update returns an error and writes no zero-weight record.
+Both `update_voter_weight_record` and `update_voter_weight_record_for_action` grant one eligible wallet, one vote (`voter_weight = 1`) with current-slot expiry (`Some(clock.slot)`). The action-bound update also binds `weight_action` and `weight_action_target` for same-transaction settlement. An ineligible update returns an error and writes no zero-weight record.
 
 A standalone update and a vote update also read the voter's migration record. A wallet that received a migrated identity votes only on a proposal that entered voting after the identity arrived, and it uses the action-bound update. The README lists the accounts for each update.
 
 The program does not run behavioral checks. It trusts the Anchor state produced by the wider Entros verification flow.
 
+## Atomic consumer client and harness
+
+`tests/realms-consumer-client.ts` validates voter eligibility off-chain and composes atomic transactions for SPL Governance consumers.
+
+`preflightVoterEligibility` inspects `Registrar`, `VoterWeightRecord`, `IdentityState`, `MigrationRecord`, and `Proposal` accounts before wallet signing. For `CastVote`, it checks strict `migratedSlot < votingAtSlot` against the proposal's `voting_at_slot`. It reports `needsCreateVwr` when the voter lacks a `VoterWeightRecord`, or returns a typed refusal reason.
+
+`buildAtomicGovernanceTransaction` bundles optional `create_voter_weight_record`, `update_voter_weight_record_for_action`, and the consuming `spl-governance` instruction into one transaction. For `CastVote`, it appends `IdentityState`, `MigrationRecord`, and `Proposal` as remaining accounts. For other actions, it appends `IdentityState` alone.
+
+`tests/realms-consumer-harness.ts` exercises the client with 17 unit tests and 10 live localnet tests against `spl_governance.so`, `entros_anchor.so`, and `entros_voter_weight.so`. The harness covers cold and warm voters, pre-voting and post-voting migrations, stale and low-score rejections, wrong action or target bindings, and cross-slot expiry.
+
 ## Current limitations
 
-Normal Realms UI execution requires a JS client that constructs the addin instructions. This repository does not contain that client.
+Normal Realms UI execution requires registering a client package with the Realms UI plugin interface. This repository does not register a Realms UI plugin yet.
 
 The current registrar stores no predecessor plugin ID. The update instruction accepts no input voter-weight record.
 
@@ -34,14 +44,13 @@ There is no Entros mainnet deployment.
 
 ## Intended integration
 
-The planned Realms client will:
+The repository consumer client (`tests/realms-consumer-client.ts`) already derives PDAs, creates missing voter-weight records, prepends `update_voter_weight_record_for_action`, and surfaces eligibility errors before wallet signing.
 
-1. Derive the registrar and voter-weight record addresses.
-2. Create missing voter-weight records.
-3. Add `update_voter_weight_record_for_action` (or `update_voter_weight_record`) before the governance action, in the same transaction.
-4. Surface eligibility errors before wallet approval.
-5. Derive its cluster from the active connection.
-6. Register with the supported Realms UI plugin interface.
+Complete these steps before enabling normal Realms UI integration:
+
+1. Package the client against the current program IDL.
+2. Derive the cluster from the active Realms UI connection.
+3. Register the client with the supported Realms UI plugin interface.
 
 The planned chaining extension will:
 
@@ -67,7 +76,11 @@ npm run test:localnet
 
 The localnet command starts the validator, loads the declared fixtures, runs the tests, and stops the validator.
 
-The current suite contains 21 unit tests and 27 integration tests.
+The current suite contains 97 tests: 10 Rust unit tests, 38 TypeScript unit tests, and 49 localnet integration tests.
+
+Run `PREFLIGHT_ONLY=1 REALM=<realm> MINT=<mint> npm run test:devnet` for a read-only devnet eligibility check.
+
+With a funded verified devnet keypair, run `npm run test:devnet` to test atomic `CreateProposal` and `CastVote` flows.
 
 ## DAO policy choices
 
